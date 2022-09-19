@@ -8,7 +8,7 @@ import numpy as np
 #import jax
 import h5py
 from matplotlib import pyplot as plt
-import image_handling
+from acme_data_cleaning import image_handling
 import json
 
 # So, the metadata is defined differently in this file, hmm...
