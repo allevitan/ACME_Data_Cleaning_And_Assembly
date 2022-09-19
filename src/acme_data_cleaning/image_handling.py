@@ -1,5 +1,10 @@
 """Functions for processing images from the fastCCD at 7.0.1.2 of the ALS
 
+Author: Abe Levitan, alevitan@mit.edu
+
+This code is mostly rewritten, but many parts are based on a previous
+codebase which was written by Filipe Maia.
+
 All of these functions are designed to accept either single images or stacks
 of images, so feel free to batch-process with abandon!
 """

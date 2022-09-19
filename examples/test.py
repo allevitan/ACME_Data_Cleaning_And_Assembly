@@ -33,9 +33,6 @@ with h5py.File(fname, 'r') as f:
 
     low_dark = image_handling.map_raw_to_tiles(low_dark)
     high_dark = image_handling.map_raw_to_tiles(high_dark)
-    print(np.min(image_handling.map_tiles_to_frame(low_dark)[:,:600]))
-    plt.imshow(image_handling.map_tiles_to_frame(low_dark))
-    plt.show()
 
     
     exp_frames = f["entry0/ccd0/exp"]
