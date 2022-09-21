@@ -3,7 +3,7 @@
 Author: Abe Levitan, alevitan@mit.edu
 
 This code is mostly rewritten, but many parts are based on a previous
-codebase which was written by Filipe Maia.
+codebase which was written by Pablo Enfadaque and Stefano Marchesini
 
 All of these functions are designed to accept either single images or stacks
 of images, so feel free to batch-process with abandon!
@@ -156,7 +156,7 @@ def make_saturation_mask(exp_tiles, radius=1, include_wing_shadows=False):
     # dilate the mask, we end up masking off nearby good pixels.
     mask = mask.at[...,1:-1,1:-1].set(
         exp_tiles[...,1:-1,1:-1] >= saturation_level)
-
+    
     kernel = np.ones([radius*2+1,radius*2+1])
     mask = convolve2d(mask, kernel) >= 1
 
@@ -276,9 +276,9 @@ def combine_exposures(frames, masks, exposure_times):
     The output is both a synthesized frame, and a synthesized mask which
     indicates which pixels were invalid across all exposures.
     
-    Any region which is masked off in all exposures will be set to the value
-    from the shortest exposure. In the case of ties, the first exposure with
-    the minimum time will be used.
+    Any region which is masked off in all exposures will be set to zero.
+    In the future, I want to use the value from the shortest exposure. In
+    the case of ties, the first exposure with the minimum time will be used.
     """
     num_trailing_dimensions = len(frames[0].shape)
     inverse_masks = 1 - masks
@@ -291,14 +291,17 @@ def combine_exposures(frames, masks, exposure_times):
 
     synthesized_frame = (total_data / total_exposure) * np.max(exposure_times)
 
+    # This sets things which were fully masked off to zero instead of nan
+    synthesized_frame = np.nan_to_num(synthesized_frame)
+    
     synthesized_mask = np.prod(masks,axis=0)
 
     # This sets the fully masked off data using the shortest exposure
-    inverse_synth_mask = 1 - synthesized_mask
-    shortest_idx = np.argmin(exposure_times)
-    factor = np.max(exposure_times) / exposure_times[shortest_idx]
-    total_exposure = total_exposure.at[inverse_synth_mask].set(
-        factor * frames[shortest_idx][inverse_synth_mask])
+    #inverse_synth_mask = 1 - synthesized_mask
+    #shortest_idx = np.argmin(exposure_times)
+    #factor = np.max(exposure_times) / exposure_times[shortest_idx]
+    #synthesized_frame = synthesized_frame.at[inverse_synth_mask].set(
+    #    factor * frames[shortest_idx][inverse_synth_mask])
 
     return synthesized_frame, synthesized_mask
 
