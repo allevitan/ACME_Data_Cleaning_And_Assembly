@@ -2,7 +2,8 @@
 
 Author: Abe Levitan, alevitan@mit.edu
 """
-
+import sys
+import argparse
 import jax.numpy as np
 import h5py
 from acme_data_cleaning import image_handling, file_handling
@@ -86,8 +87,7 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
         print('Finished processing                                          ')
 
 
-if __name__ == '__main__':
-    import argparse
+def main(argv=sys.argv):
 
     parser = argparse.ArgumentParser()
 
@@ -118,3 +118,6 @@ if __name__ == '__main__':
                          default_mask=default_mask)
     
     
+if __name__ == '__main__':
+    sys.exit(main())
+

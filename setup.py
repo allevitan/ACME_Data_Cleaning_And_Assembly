@@ -21,7 +21,11 @@ setuptools.setup(
         "pyzmq",
         "jax",
     ],
-
+    entry_points={
+        'console_scripts': [
+            'process_stxm_file=acme_data_cleaning.process_stxm_file:main'
+        ]
+    },
     package_dir={"": "src"},
     packages=setuptools.find_packages(),
     classifiers=[
