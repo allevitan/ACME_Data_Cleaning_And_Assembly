@@ -14,7 +14,7 @@ def read_metadata_from_stxm(stxm_file, add_detector_geometry=True):
     until that information can be added to the .stxm files themselves.
     """
     metadata = json.loads(stxm_file["metadata/"].asstr()[()])
-    
+
     # This is a hack, but this data should really be stored in the .stxm files
     # themselves. So, instead of adding a separate configuration file, I'm
     # going to leave this hack in until I can convince David to add this to the
@@ -216,6 +216,13 @@ def create_cxi(filename, metadata):
                     for group in metadata_format[subkey]:
                         cxi_file.create_dataset(group, data = subvalue)
 
+        # This is another hack, but unfortunately the energy is stored in
+        # eV in the .stxm file, but needs to be in J for a .cxi file, so we
+        # copy it over here
+        if 'energy' in metadata:
+            energy = metadata['energy'] * 1.60218e-19 # convert to Joules
+            for group in metadata_format['energy']:
+                cxi_file[group][()] = energy
         yield cxi_file
 
 

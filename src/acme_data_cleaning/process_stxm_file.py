@@ -28,20 +28,20 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
     #
     # Next we get the key parameters from the metadata that we need to know
     # for the scan.
-    #
+    #    
     if metadata['double_exposure']:
         n_exp_per_point=2
         # Note: Old files have dwell1 meaning the second exposure and
         # dwell2 meaning the first exposure
-        exposure_times = np.array([metadata['dwell1'],
-                                   metadata['dwell2']])
+        exposure_times = np.array([metadata['dwell2'],
+                                   metadata['dwell1']])
         if verbose:
             print('File uses double exposures with exposure times',
                   exposure_times)
     else:
         n_exp_per_point=1
         # It honestly doesn't matter when it's not a double exposure
-        exposure_times = np.array([dwell1])
+        exposure_times = np.array([metadata['dwell1']])
         if verbose:
             print('File uses single exposures')
 
