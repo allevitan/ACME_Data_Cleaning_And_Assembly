@@ -105,7 +105,9 @@ def main(argv=sys.argv):
     # Default mask, TODO: should be loaded from a file
     default_mask = np.zeros([960,960])
     default_mask = default_mask.at[:480,840:].set(1)
-
+    default_mask = default_mask.at[:480,590].set(1)
+    default_mask = default_mask.swapaxes(-1,-2)[...,::-1,::-1]
+    
     for stxm_filename in stxm_filenames:
         output_filename = '.'.join(stxm_filename.split('.')[:-1])+'.cxi'
         if not args.succinct:

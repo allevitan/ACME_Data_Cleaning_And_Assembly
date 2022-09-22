@@ -107,7 +107,9 @@ def map_tiles_to_frame(tiles, include_overscan=False):
     bottom_half = np.concatenate(bottom_tiles.swapaxes(-3,0), -1)
     bottom_half = bottom_half[...,::-1,::-1]
 
-    return np.concatenate((top_half, bottom_half), axis=-2)
+    frame = np.concatenate((top_half, bottom_half), axis=-2)
+    #The last thing which needs to be done is a rotation 
+    return frame.swapaxes(-1,-2)[...,::-1,::-1]
 
 
 @partial(np.vectorize, signature='(n,m),(k,l)->(n,m)')
