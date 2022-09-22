@@ -39,30 +39,44 @@ def process_file(stxm_file, pub_socket):
     # Now I should iterate through the darks, emitting "dark" events
     for idx, dark_set in enumerate(darks_iterator):
         time.sleep(0.1)
-        for dark in dark_set:
+        for n, dark in enumerate(dark_set):
+            if n == 0:
+                dwell = metadata['dwell2']
+            else:
+                dwell = metadata['dwell1']
             print('Frame Event (dark)', idx)
             event = {
                 'event': 'frame',
-                'ccd_mode': 'dark',
-                'ccd_frame': dark,
+                'data': {
+                    'ccd_mode': 'dark',
+                    'ccd_frame': dark,
+                    'dwell': dwell,
+                }
             }
             pub_socket.send_pyobj(event)
     
-    exposure_iterator = file_handling.read_chunked_exposures_from_stxm(
+    exposure_iterator = file_handling.read_exposures_from_stxm(
         stxm_file, n_exp_per_point=n_exp_per_point)
 
     for idx,(translation, exposure_set) \
         in enumerate(zip(translations, exposure_iterator)):
-        time.sleep(0.1)
-        for exposure in exposure_set:
+        time.sleep(0.5)
+        for n, exposure in enumerate(exposure_set):
+            if n == 0:
+                dwell = metadata['dwell2']
+            else:
+                dwell = metadata['dwell1']
             print('Frame Event (exposure)', idx)
             event = {
                 'event': 'frame',
-                'ccd_mode': 'exp',
-                'ccd_frame': exposure,
-                'xPos': translation[0],
-                'yPos': translation[1],
-                'index': idx
+                'data' : {
+                    'ccd_mode': 'exp',
+                    'ccd_frame': exposure,
+                    'xPos': translation[0],
+                    'yPos': translation[1],
+                    'index': idx,
+                    'dwell': dwell,
+                }
             }
             pub_socket.send_pyobj(event)
 

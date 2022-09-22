@@ -23,7 +23,8 @@ setuptools.setup(
     ],
     entry_points={
         'console_scripts': [
-            'process_stxm_file=acme_data_cleaning.process_stxm_file:main'
+            'process_stxm_file=acme_data_cleaning.process_stxm_file:main',
+            'simulate_zmq_from_stxm_file=acme_data_cleaning.simulate_zmq_from_stxm_file:main',
         ]
     },
     package_dir={"": "src"},
