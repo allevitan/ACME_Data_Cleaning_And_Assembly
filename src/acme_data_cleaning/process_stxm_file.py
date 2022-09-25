@@ -5,9 +5,12 @@ Author: Abe Levitan, alevitan@mit.edu
 import sys
 import argparse
 import jax.numpy as np
+import numpy as onp
 import h5py
 from acme_data_cleaning import image_handling, file_handling
 
+default_shear = onp.array([[ 0.99961877, -0.06551266],
+                           [ 0.02651655,  0.99879594]])
 
 def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
                  compression='lzf', default_mask=None):
@@ -78,8 +81,10 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
                 image_handling.combine_exposures(
                     np.stack(cleaned_exps), np.stack(masks), exposure_times)
 
-            chunk_translations = translations[idx*chunk_size:(idx+1)*chunk_size]
+            chunk_translations = onp.array(translations[idx*chunk_size:(idx+1)*chunk_size])
 
+            chunk_translations[:,:2] = onp.matmul(default_shear, chunk_translations[:,:2].transpose()).transpose()
+            
             file_handling.add_frames(cxi_file,
                                      synthesized_exps,
                                      chunk_translations,

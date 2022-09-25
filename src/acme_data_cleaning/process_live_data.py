@@ -17,6 +17,9 @@ import numpy as onp
 # 2) All the darks which have been collected on this scan
 # 3) All the metadata for the scan
 
+default_shear = onp.array([[ 0.99961877, -0.06551266],
+                           [ 0.02651655,  0.99879594]])
+
 
 def make_new_state():
     return {
@@ -132,6 +135,9 @@ def process_exp_event(cxi_file, state, event, pub):
     
     state['position'] = onp.array([-event['data']['xPos'],
                                    -event['data']['yPos']])
+
+    # A correction for the shear in the probe positions
+    state['position'] = onp.matmul(default_shear, state['position'])
 
     dwell = event['data']['dwell']
     dark = state['darks'][dwell]
