@@ -7,7 +7,11 @@ import argparse
 import jax.numpy as np
 import numpy as onp
 import h5py
+import glob
 from acme_data_cleaning import image_handling, file_handling
+
+
+from jax.lib import xla_bridge
 
 default_shear = onp.array([[ 0.99961877, -0.06551266],
                            [ 0.02651655,  0.99879594]])
@@ -70,17 +74,21 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
             if verbose:
                 print('Processing frames', idx*chunk_size,
                       'to', (idx+1)*chunk_size-1, end='\r')
+<<<<<<< Updated upstream
             
             cleaned_exps, masks = zip(*(image_handling.process_frame(exp, dark)
-                                        for exp, dark in zip(exps, darks)))
+=======
 
+            cleaned_exps, masks = zip(*(image_handling.process_frame(exp, dark,
+                                                                     include_overscan=False)
+>>>>>>> Stashed changes
+                                        for exp, dark in zip(exps, darks)))
             # Because combine_exposures works with an arbitrary number of
             # exposures, we just always use it, and avoid needing a separate
             # case for the single and double exposure processing.
             synthesized_exps, synthesized_masks = \
                 image_handling.combine_exposures(
                     np.stack(cleaned_exps), np.stack(masks), exposure_times)
-
             chunk_translations = onp.array(translations[idx*chunk_size:(idx+1)*chunk_size])
 
             chunk_translations[:,:2] = onp.matmul(default_shear, chunk_translations[:,:2].transpose()).transpose()
@@ -98,7 +106,7 @@ def main(argv=sys.argv):
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('stxm_file', nargs='+', type=str, help='The file or files to process')
+    parser.add_argument('stxm_file', nargs='+', type=str, help='The file or files to process, allowing for unix globbing')
     parser.add_argument('--chunk_size','-c', type=int, default=10, help='The chunk size for data processing, default is 10.')
     parser.add_argument('--compression', type=str, default='lzf', help='What hdf5 compression filter to use on the output CCD data. Default is lzf.')
     parser.add_argument('--succinct', action='store_true', help='Turns off verbose output')
@@ -112,8 +120,18 @@ def main(argv=sys.argv):
     default_mask = default_mask.at[:480,840:].set(1)
     default_mask = default_mask.at[:480,590].set(1)
     default_mask = default_mask.swapaxes(-1,-2)[...,::-1,::-1]
-    
+
+    # Here we make globbing work nicely for files
+    expanded_stxm_filenames = []
     for stxm_filename in stxm_filenames:
+        filenames = glob.glob(stxm_filename)
+        if len(filenames) == 0:
+            print('WARNING:',stxm_filename,'did not match any files.')
+        for filename in filenames:
+            if filename not in expanded_stxm_filenames:
+                expanded_stxm_filenames.append(filename)
+        
+    for stxm_filename in expanded_stxm_filenames:
         output_filename = '.'.join(stxm_filename.split('.')[:-1])+'.cxi'
         if not args.succinct:
             print('Processing',stxm_filename)
@@ -125,8 +143,8 @@ def main(argv=sys.argv):
                          verbose=not args.succinct,
                          compression=args.compression.lower().strip(),
                          default_mask=default_mask)
-    
-    
+
+
 if __name__ == '__main__':
     sys.exit(main())
 

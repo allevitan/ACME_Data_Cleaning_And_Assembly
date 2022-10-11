@@ -236,6 +236,10 @@ def apply_overscan_background_subtraction(tiles, max_correction=50):
     return np.maximum(tiles -  background_estimate[...,None] - 0.55, 0)
 
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 @partial(jax.jit, static_argnames=('mask','include_wing_shadows',
                                    'include_overscan'))
 def process_frame(exp, dark, mask=None,
@@ -264,16 +268,27 @@ def process_frame(exp, dark, mask=None,
             map_tiles_to_frame(mask, include_overscan=include_overscan))
 
 @jax.jit
+<<<<<<< Updated upstream
 def combine_exposures(frames, masks, exposure_times):
+=======
+def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
+>>>>>>> Stashed changes
     """Combines a set of exposures of different lengths
 
     This expects the input to be in the form of arrays with the exposures /
     masks stacked along the first dimension. I.e., it will fail when given
     a list of frames as input.
-    
-    Each pixel will be a combination of data from all the exposures for which
-    that pixel was not masked. The result will be normalized so the intensity
-    matches that of the longest exposure.
+
+    If the use_all_exposures flag is set to True, then each pixel will be a
+    properly normalized sum of the data from all the exposures for which
+    that pixel was not masked. This is appropriate for, for example, single
+    photon counting detectors where the detector readout noise is small.
+
+    If the use_all_exposures flag is set to false, each pixel will only contain
+    data from the longest exposure for which it was not saturated. This is
+    best for the case where detector readout noise is significant, so adding in
+    data from a short exposure will simply increase the readout noise. This
+    option is selected by default, as the fccd has significant readout noise.
 
     The output is both a synthesized frame, and a synthesized mask which
     indicates which pixels were invalid across all exposures.
@@ -282,12 +297,35 @@ def combine_exposures(frames, masks, exposure_times):
     In the future, I want to use the value from the shortest exposure. In
     the case of ties, the first exposure with the minimum time will be used.
     """
+<<<<<<< Updated upstream
+=======
+
+    # This sets up the masks that we need if we plan to use all the exposures
+>>>>>>> Stashed changes
     num_trailing_dimensions = len(frames[0].shape)
     inverse_masks = 1 - masks
     exposure_weighted_masks = (inverse_masks.astype(np.float32)
                                * exposure_times.reshape(
                 [len(exposure_times),] + [1,]*num_trailing_dimensions))
+<<<<<<< Updated upstream
 
+=======
+    
+    # If we don't want to use all the exposures, we modify the masks to
+    # just select a single exposure per pixel
+    if use_all_exposures==False:
+        # This contains the index of the exposure to use for each pixel
+        mask_idx = np.argmax(exposure_weighted_masks,axis=0)
+        for idx, exp_time in enumerate(exposure_times):
+            # And this updates the masks so only the mask at that index
+            # is set to nonzero
+            mask_at_this_index = (mask_idx == idx)
+            exposure_weighted_masks = exposure_weighted_masks.at[idx].set(
+                exp_time * mask_at_this_index)
+            inverse_masks = inverse_masks.at[idx].set(mask_at_this_index)
+
+    # Finally, we use these masks to generate the output data
+>>>>>>> Stashed changes
     total_data = np.sum((inverse_masks) * frames, axis=0)
     total_exposure = np.sum(exposure_weighted_masks, axis=0)
 
@@ -297,6 +335,7 @@ def combine_exposures(frames, masks, exposure_times):
     synthesized_frame = np.nan_to_num(synthesized_frame)
     
     synthesized_mask = np.prod(masks,axis=0)
+<<<<<<< Updated upstream
 
     # This sets the fully masked off data using the shortest exposure
     #inverse_synth_mask = 1 - synthesized_mask
@@ -305,6 +344,9 @@ def combine_exposures(frames, masks, exposure_times):
     #synthesized_frame = synthesized_frame.at[inverse_synth_mask].set(
     #    factor * frames[shortest_idx][inverse_synth_mask])
 
+=======
+ 
+>>>>>>> Stashed changes
     return synthesized_frame, synthesized_mask
 
 
