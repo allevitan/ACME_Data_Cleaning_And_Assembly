@@ -74,14 +74,10 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
             if verbose:
                 print('Processing frames', idx*chunk_size,
                       'to', (idx+1)*chunk_size-1, end='\r')
-<<<<<<< Updated upstream
-            
-            cleaned_exps, masks = zip(*(image_handling.process_frame(exp, dark)
-=======
 
             cleaned_exps, masks = zip(*(image_handling.process_frame(exp, dark,
-                                                                     include_overscan=False)
->>>>>>> Stashed changes
+                                                include_overscan=False)
+
                                         for exp, dark in zip(exps, darks)))
             # Because combine_exposures works with an arbitrary number of
             # exposures, we just always use it, and avoid needing a separate
