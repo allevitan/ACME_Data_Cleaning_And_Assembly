@@ -4,20 +4,19 @@ Author: Abe Levitan, alevitan@mit.edu
 """
 import sys
 import argparse
-import jax.numpy as np
-import numpy as onp
+import numpy as np
+import torch as t
 import h5py
 import glob
 from acme_data_cleaning import image_handling, file_handling
 
-
-from jax.lib import xla_bridge
-
-default_shear = onp.array([[ 0.99961877, -0.06551266],
-                           [ 0.02651655,  0.99879594]])
+# The shear calculations are so fast, there's no point in doing them
+# on the GPU
+default_shear = np.array([[ 0.99961877, -0.06551266],
+                          [ 0.02651655,  0.99879594]])
 
 def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
-                 compression='lzf', default_mask=None):
+                 compression='lzf', default_mask=None, device='cpu'):
     #
     # We first read the metadata
     #
@@ -58,8 +57,8 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
             file_handling.add_mask(cxi_file, default_mask)
             
         darks = file_handling.read_mean_darks_from_stxm(
-            stxm_file, n_exp_per_point=n_exp_per_point)
-        
+            stxm_file, n_exp_per_point=n_exp_per_point, device=device)
+
         # we pre-map the darks to tile format, which avoids needing to redo
         # this computation every cycle
         darks = tuple(image_handling.map_raw_to_tiles(dark) for dark in darks)
@@ -84,10 +83,10 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
             # case for the single and double exposure processing.
             synthesized_exps, synthesized_masks = \
                 image_handling.combine_exposures(
-                    np.stack(cleaned_exps), np.stack(masks), exposure_times)
-            chunk_translations = onp.array(translations[idx*chunk_size:(idx+1)*chunk_size])
+                    t.stack(cleaned_exps), t.stack(masks), exposure_times)
+            chunk_translations = np.array(translations[idx*chunk_size:(idx+1)*chunk_size])
 
-            chunk_translations[:,:2] = onp.matmul(default_shear, chunk_translations[:,:2].transpose()).transpose()
+            chunk_translations[:,:2] = np.matmul(default_shear, chunk_translations[:,:2].transpose()).transpose()
             
             file_handling.add_frames(cxi_file,
                                      synthesized_exps,
@@ -112,10 +111,10 @@ def main(argv=sys.argv):
     stxm_filenames = args.stxm_file
 
     # Default mask, TODO: should be loaded from a file
-    default_mask = np.zeros([960,960])
-    default_mask = default_mask.at[:480,840:].set(1)
-    default_mask = default_mask.at[:480,590].set(1)
-    default_mask = default_mask.swapaxes(-1,-2)[...,::-1,::-1]
+    default_mask = t.zeros([960,960])
+    default_mask[:480,840:] = 1
+    default_mask[:480,590] = 1
+    default_mask = default_mask.swapaxes(-1,-2).flip(-1,-2)
 
     # Here we make globbing work nicely for files
     expanded_stxm_filenames = []

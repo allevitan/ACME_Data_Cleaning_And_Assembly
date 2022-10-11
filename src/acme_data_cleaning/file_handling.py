@@ -1,9 +1,18 @@
 from contextlib import contextmanager
 import h5py
 import json
-from jax import numpy as np
+import numpy as np
+import torch as t
 from functools import reduce
 
+# Note: All image data (darks, exposures, masks, etc.) are processed as
+# pytorch data which can potentially be on the GPU. Thus, all functions
+# which produce image data have an argument to choose the output device,
+# and return pytorch tensors. All functions to save image data expect
+# pytorch tensors
+
+# However, other data (metadata, translations, etc.) is small and barely
+# modified, this processing is all done on the cpu and purely in numpy.
 
 def read_metadata_from_stxm(stxm_file, add_detector_geometry=True):
     """Extracts the metadata from a .stxm file.
@@ -56,7 +65,7 @@ def read_translations_from_stxm(stxm_file):
     return np.stack([x_pos, y_pos, np.zeros_like(x_pos)], axis=-1)
 
 
-def read_exposures_from_stxm(stxm_file, n_exp_per_point=1):
+def read_exposures_from_stxm(stxm_file, n_exp_per_point=1, device='cpu'):
     """A generator function to iterate through the exp frames in a .stxm file
 
     This returns an iterator which produces tuples of length n_exp_per_point,
@@ -65,12 +74,13 @@ def read_exposures_from_stxm(stxm_file, n_exp_per_point=1):
     exp_frames = stxm_file["entry0/ccd0/exp"]
     frame_indices = sorted([int(idx) for idx in list(exp_frames)])
     for idx in frame_indices[::n_exp_per_point]:
-        yield tuple(np.array(exp_frames[str(idx + offset)], dtype=np.float32)
-                    for offset in range(n_exp_per_point))
+        frames = (np.array(exp_frames[str(idx + offset)], dtype=np.float32)
+                  for offset in range(n_exp_per_point))
+        yield tuple(t.as_tensor(frame, device=device) for frame in frames)
 
         
 def read_chunked_exposures_from_stxm(stxm_file, chunk_size=10,
-                                     n_exp_per_point=1):
+                                     n_exp_per_point=1, device='cpu'):
     """A generator function to iterate through the exp frames in a .stxm file
 
     This returns an iterator which produces tuples of length n_exp_per_point,
@@ -92,10 +102,11 @@ def read_chunked_exposures_from_stxm(stxm_file, chunk_size=10,
                   for idx in chunk]
 
         # And this packages the exposures into 3D arrays
-        yield tuple(np.stack(exposures) for exposures in zip(*frames))
+        yield tuple(t.as_tensor(np.stack(exposures), device=device)
+                    for exposures in zip(*frames))
         
 
-def read_darks_from_stxm(stxm_file, n_exp_per_point=1):
+def read_darks_from_stxm(stxm_file, n_exp_per_point=1, device='cpu'):
     """A generator function to iterate through the dark frames in a .stxm file
 
     This returns an iterator which produces tuples of length n_exp_per_point,
@@ -104,18 +115,20 @@ def read_darks_from_stxm(stxm_file, n_exp_per_point=1):
     dark_frames = stxm_file["entry0/ccd0/dark"]
     frame_indices = sorted([int(idx) for idx in list(dark_frames)])
     for idx in frame_indices[::n_exp_per_point]:
-        yield tuple(np.array(dark_frames[str(idx + offset)], dtype=np.float32)
-                    for offset in range(n_exp_per_point))
+        frames = (np.array(dark_frames[str(idx + offset)], dtype=np.float32)
+                  for offset in range(n_exp_per_point))
+        yield tuple(t.as_tensor(frame, device=device) for frame in frames)
 
 
-def read_mean_darks_from_stxm(stxm_file, n_exp_per_point=1):
+def read_mean_darks_from_stxm(stxm_file, n_exp_per_point=1, device='cpu'):
     """Makes a tuple of average darks from the stored data in a .stxm file
     """
     darks_iterator = read_darks_from_stxm(stxm_file,
-                                          n_exp_per_point=n_exp_per_point)
+                                          n_exp_per_point=n_exp_per_point,
+                                          device=device)
     # This isn't memory-efficient, but so be it. There shouldn't be more than
     # a few dozen darks, and we can rewrite it if need be
-    darks = tuple(np.mean(np.stack(list(darks)), axis=0)
+    darks = tuple(t.mean(t.stack(list(darks)), dim=0)
                   for darks in zip(*darks_iterator))
     return darks
 
@@ -245,8 +258,8 @@ def add_frame(cxi_file, frame, translation, mask=None, intensity=None,
     intensities = np.array([intensity]) if intensity is not None else None
     
     return add_frames(cxi_file,
-                      np.expand_dims(frame,0),
-                      np.expand_dims(translation,0),
+                      t.unsqueeze(frame,0),
+                      t.unsqueeze(translation,0),
                       masks=masks,
                       intensities=intensities,
                       compression=compression)
@@ -297,7 +310,7 @@ def add_frames(cxi_file, frames, translations, masks=None, intensities=None,
         data_group = cxi_file[groups['detector'] + 'data']
         data_group.resize((data_group.shape[0]+frames.shape[0],)
                           + data_group.shape[1:])
-        data_group[-frames.shape[0]:] = frames
+        data_group[-frames.shape[0]:] = frames.cpu().numpy()
 
         translation_group = cxi_file[groups['geometry'] + 'translation']
         translation_group.resize((translation_group.shape[0]
@@ -307,14 +320,14 @@ def add_frames(cxi_file, frames, translations, masks=None, intensities=None,
     if masks is not None:
         # Note that we only save one mask, which I find by summing all the
         # masks from individual shots.
-        mask_to_save = np.sum(masks, axis=0).astype(np.bool_).astype(np.uint32)
+        mask_to_save = t.sum(masks, axis=0).to(dtype=t.bool)
 
         add_mask(cxi_file, mask_to_save)
 
 def add_mask(cxi_file, mask):
     """Adds a mask to a .cxi file, melding it with any existing masks.
     """
-    mask_to_save = mask.astype(np.uint32)
+    mask_to_save = mask.cpu().numpy().astype(np.uint32)
     if groups['detector'] + 'mask' not in cxi_file:
         cxi_file.create_dataset(groups['detector'] + 'mask',
                                 data=mask_to_save)

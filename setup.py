@@ -19,7 +19,7 @@ setuptools.setup(
         "matplotlib>=2.0", # 2.0 has better colormaps which are used by default
         "PyQt5",
         "pyzmq",
-        "jax",
+        "torch>=1.9.0",
     ],
     entry_points={
         'console_scripts': [

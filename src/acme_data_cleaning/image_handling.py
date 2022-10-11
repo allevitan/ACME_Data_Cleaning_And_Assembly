@@ -11,11 +11,10 @@ of images, so feel free to batch-process with abandon!
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import jax.numpy as np
-import jax
-from jax import lax
-from jax import scipy
-from functools import partial
+import numpy as np
+#import scipy
+from scipy import signal
+import torch as t
 
 __all__ = [
     'map_raw_to_tiles',
@@ -45,7 +44,6 @@ tile_slice = np.s_[...,6:-1,1:-1]
 saturation_level = 2**15 + 2**14 + 2**13 - 1 
 
 
-@jax.jit
 def map_raw_to_tiles(data):
     """Maps images from the raw format output by the fccd to a stack of tiles
 
@@ -69,7 +67,7 @@ def map_raw_to_tiles(data):
     # to propagate toward the seam, and blooming from the saturation also
     # tends to propagate clockwise around the seam, so having a consistent
     # orientation of the tiles is useful.
-    bottom_half = data[...,:-full_tile_height-1:-1,::-1]
+    bottom_half = data[...,-full_tile_height:,:].flip(-1,-2)
 
     def stack_tiles(half):
         # The transposes here allow the data to flow properly into the tiles
@@ -83,11 +81,10 @@ def map_raw_to_tiles(data):
     top_tiles = stack_tiles(top_half)
     bottom_tiles = stack_tiles(bottom_half)
 
-    tiles = np.concatenate([top_tiles, bottom_tiles], axis=-3)
+    tiles = t.cat([top_tiles, bottom_tiles], dim=-3)
     return tiles
 
 
-@partial(jax.jit, static_argnames=('include_overscan',))
 def map_tiles_to_frame(tiles, include_overscan=False):
     """Maps from a stack of tiles to a full, stitched detector frame
 
@@ -103,38 +100,39 @@ def map_tiles_to_frame(tiles, include_overscan=False):
     top_tiles = tiles[...,:96,:,:]
     bottom_tiles = tiles[...,96:,:,:]
 
-    top_half = np.concatenate(top_tiles.swapaxes(-3,0), -1)
-    bottom_half = np.concatenate(bottom_tiles.swapaxes(-3,0), -1)
-    bottom_half = bottom_half[...,::-1,::-1]
+    top_half = t.cat(list(top_tiles.swapaxes(-3,0)), dim=-1)
+    bottom_half = t.cat(list(bottom_tiles.swapaxes(-3,0)), dim=-1)
+    bottom_half = bottom_half.flip(-1,-2)
 
-    frame = np.concatenate((top_half, bottom_half), axis=-2)
+    frame = t.cat((top_half, bottom_half), dim=-2)
     #The last thing which needs to be done is a rotation 
-    return frame.swapaxes(-1,-2)[...,::-1,::-1]
+    return frame.swapaxes(-1,-2).flip(-2,-1)
 
 
-@partial(np.vectorize, signature='(n,m),(k,l)->(n,m)')
 def convolve2d(a, b):
-    """A wrapper for jax.scipy.convolve to avoid some bugs in jax.
+    """A wrapper for t.nn.functional.convolve to avoid some nonsense
 
-    This expects b to be a 2D convolution kernel, and a is an arbitrarily
+    The nonsense is that convolutions for neural network layers tend to need
+    a bunch of bells and whistles, which we don't need here, but to use
+    the pytorch convolution you need to set all those explicitly to "1", which
+    is annoying to repeat all over the place.
+
+    This expects "b" to be a 2D convolution kernel, and "a" is an arbitrarily
     shaped array of at least 2 dimensions.
     
-    Side note: I'm not finding jax very enjoyable to program with, I think
-    I much prefer pytorch.
-
-    Basically, convolutions with jax.scipy.convolve seem to fail in dimensions
-    of 4 or higher, but I need to operate on 4d arrays to do batched
-    computations on stacks of images in "tile format". I can get around this
-    problem by calling jax.scipy.convolve on 2d arrays, and using jax's
-    vectorization to properly broadcast that operation to higher dimensions.
-
     Note that this method will always use direct convolution, with 'same'
     boundary conditions.
     """
-    return scipy.signal.convolve(a, b, mode='same')
+    leading_dimensions = list(a.shape[:-2])
+    final_dimensions = list(a.shape[-2:])
+    reshaped = a.reshape([np.prod(leading_dimensions),1]+final_dimensions)
+    expanded_kernel = b.reshape([1,1] + list(b.shape))
+    convolved = t.nn.functional.conv2d(reshaped, expanded_kernel,
+                                       padding='same')
+    output = convolved.reshape(leading_dimensions+final_dimensions)
+    return output
 
 
-@partial(jax.jit, static_argnames=('radius','include_wing_shadows'))
 def make_saturation_mask(exp_tiles, radius=1, include_wing_shadows=False):
     """Generates a map of saturated pixels in an exposure.
 
@@ -150,30 +148,28 @@ def make_saturation_mask(exp_tiles, radius=1, include_wing_shadows=False):
     in the 0th order. These occur two tiles outward from the saturated regions.
     """
 
-    mask = np.zeros(exp_tiles.shape)
+    mask = t.zeros(exp_tiles.shape)
 
     # We want to exclude the overscan here, because there are some overscan
     # pixels at the corner points of the tiles which saturate, not because
     # any nearby signal pixels are saturated. If we include those and then
     # dilate the mask, we end up masking off nearby good pixels.
-    mask = mask.at[...,1:-1,1:-1].set(
-        exp_tiles[...,1:-1,1:-1] >= saturation_level)
+    mask[...,1:-1,1:-1] = exp_tiles[...,1:-1,1:-1] >= saturation_level
     
-    kernel = np.ones([radius*2+1,radius*2+1])
+    kernel = t.ones([radius*2+1,radius*2+1])
     mask = convolve2d(mask, kernel) >= 1
 
     if include_wing_shadows:
         # This also masks off the regions that have the bizarre wing shadows,
         # which show up two tiles outward from saturated regions
-        mask = mask.at[:46].set(mask[:46] + mask[2:48])
-        mask = mask.at[50:96].set(mask[50:96] + mask[48:96-2])
-        mask = mask.at[96:96+46].set(mask[96:96+46:] + mask[96+2:96+48])
-        mask = mask.at[96+50:].set(mask[96+50:] + mask[96+48:-2])
+        mask[:46] = mask[:46] + mask[2:48]
+        mask[50:96] = mask[50:96] + mask[48:96-2]
+        mask[96:96+46] = mask[96:96+46:] + mask[96+2:96+48]
+        mask[96+50:] = mask[96+50:] + mask[96+48:-2]
         mask = mask >= 1
 
     return mask
 
-@jax.jit
 def apply_overscan_background_subtraction(tiles, max_correction=50):
     """Applies a frame-to-frame background correction based on the overscan.
 
@@ -192,52 +188,37 @@ def apply_overscan_background_subtraction(tiles, max_correction=50):
     within the 0th order to outside the 0th order.
     """
     
-    background_estimate = np.minimum(tiles[...,:,0], tiles[...,:,11])
-
+    background_estimate = t.minimum(tiles[...,:,0], tiles[...,:,11])
+    
     med_width = 5 # The median will be calculated over 2*med_width+1 pixels
+    
+    # This will pad only the last dimension (the dimension along the columns).
+    # The padding will alleviate edge effects with the median filter
+    pad_shape = (med_width, med_width)   
+    padded_bk = t.nn.functional.pad(background_estimate,
+                                    pad_shape, mode='replicate')
 
-    # These extra zeros are a hack, because lax doesn't have a good way to
-    # pad a specific axis, so I need to tell it how much to pad all the axes,
-    # which means padding all the earlier axes by 0.
-    pad_shape = ( ((0,0),) * (len(background_estimate.shape) - 1)
-                  + ((med_width, med_width),))    
-    padded_bk = np.pad(background_estimate, pad_shape, 'edge')
-
-    # Again, here I'm just getting the right extra zeros to be used for the
-    # lax.dynamic_slice function, because there's not good way to just slice
-    # along a specified axis. These will all be used in the loop body.
-    extra_dimensions = (0,) * (len(background_estimate.shape) - 1)
-    slice_shape = background_estimate.shape[:-1] + (2*med_width+1,)
-    extra_slice = ((slice(None,None,None),)
-                   * (len(background_estimate.shape) - 1)) 
-
-    def loop_body(r, s):
-        relevant_slice = lax.dynamic_slice(
-            padded_bk, extra_dimensions + (r,), slice_shape)
-        
-        s['bk'] = s['bk'].at[...,r].set(np.median(relevant_slice, axis=-1))
-        return s
-
-    init_s = dict(bk=np.empty_like(background_estimate))
-    s = jax.lax.fori_loop(0, background_estimate.shape[-1], loop_body, init_s)
-    background_estimate = s['bk']
+    # This places sequential slices of the background estimate along a new
+    # dimension, so the median can be calculated as a single kernel
+    unfolded_background = padded_bk.unfold(-1, 2*med_width+1,1)
+    background_median = t.median(unfolded_background, dim=-1)[0]
 
     # We apply a maximum to the background estimate, because sometimes saturated
     # pixels will bloom into the overscan, causing the background estimate to
     # become unreasonably large. However, we don't apply a minimum, because
     # saturation can also cause large negative changes to the background which
     # are real, and do show up in the overscan.
-    background_estimate = np.minimum(background_estimate, max_correction)
+    background_estimate = t.minimum(background_estimate,
+                                    t.as_tensor(max_correction))
 
     # 0.55 is emperically the difference between the average minimum value
     # of the two outer pixels in a row, and the mean of that row when
     # in a region which is not illuminated. This arises because the minimum is
     # a biased estimator, and this accounts for that bias
-    return np.maximum(tiles -  background_estimate[...,None] - 0.55, 0)
+    return t.maximum(tiles -  background_estimate[...,None] - 0.55,
+                     t.as_tensor(0))
 
 
-@partial(jax.jit, static_argnames=('mask','include_wing_shadows',
-                                   'include_overscan'))
 def process_frame(exp, dark, mask=None,
                   max_correction=50,
                   include_wing_shadows=None,
@@ -251,7 +232,6 @@ def process_frame(exp, dark, mask=None,
     the dark should be input in "tiles" format to avoid needing to reformat
     the dark with every new experimental frame.    
     """
-    
     tiles = map_raw_to_tiles(exp)
     saturation_mask = make_saturation_mask(tiles)
     mask = saturation_mask if mask is None else mask * saturation_mask
@@ -263,7 +243,6 @@ def process_frame(exp, dark, mask=None,
     return (map_tiles_to_frame(cleaned, include_overscan=include_overscan),
             map_tiles_to_frame(mask, include_overscan=include_overscan))
 
-@jax.jit
 def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
     """Combines a set of exposures of different lengths
 
@@ -289,10 +268,11 @@ def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
     In the future, I want to use the value from the shortest exposure. In
     the case of ties, the first exposure with the minimum time will be used.
     """
+    exposure_times = t.as_tensor(exposure_times)
     # This sets up the masks that we need if we plan to use all the exposures
     num_trailing_dimensions = len(frames[0].shape)
-    inverse_masks = 1 - masks
-    exposure_weighted_masks = (inverse_masks.astype(np.float32)
+    inverse_masks = ~masks
+    exposure_weighted_masks = (inverse_masks.to(dtype=t.float32)
                                * exposure_times.reshape(
                 [len(exposure_times),] + [1,]*num_trailing_dimensions))
     
@@ -300,26 +280,24 @@ def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
     # just select a single exposure per pixel
     if use_all_exposures==False:
         # This contains the index of the exposure to use for each pixel
-        mask_idx = np.argmax(exposure_weighted_masks,axis=0)
+        mask_idx = t.argmax(exposure_weighted_masks,axis=0)
         for idx, exp_time in enumerate(exposure_times):
             # And this updates the masks so only the mask at that index
             # is set to nonzero
             mask_at_this_index = (mask_idx == idx)
-            exposure_weighted_masks = exposure_weighted_masks.at[idx].set(
-                exp_time * mask_at_this_index)
-            inverse_masks = inverse_masks.at[idx].set(mask_at_this_index)
-
+            exposure_weighted_masks[idx] = exp_time * mask_at_this_index
+            inverse_masks[idx] = mask_at_this_index
+    
     # Finally, we use these masks to generate the output data
+    total_data = t.sum((inverse_masks) * frames, dim=0)
+    total_exposure = t.sum(exposure_weighted_masks, dim=0)
 
-    total_data = np.sum((inverse_masks) * frames, axis=0)
-    total_exposure = np.sum(exposure_weighted_masks, axis=0)
-
-    synthesized_frame = (total_data / total_exposure) * np.max(exposure_times)
+    synthesized_frame = (total_data / total_exposure) * t.max(exposure_times)
 
     # This sets things which were fully masked off to zero instead of nan
-    synthesized_frame = np.nan_to_num(synthesized_frame)
+    synthesized_frame = t.nan_to_num(synthesized_frame)
     
-    synthesized_mask = np.prod(masks,axis=0)
+    synthesized_mask = t.prod(masks,dim=0)
 
     return synthesized_frame, synthesized_mask
 
