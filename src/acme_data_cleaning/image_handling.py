@@ -44,7 +44,7 @@ tile_slice = np.s_[...,6:-1,1:-1]
 saturation_level = 2**15 + 2**14 + 2**13 - 1 
 
 
-def map_raw_to_tiles(data):
+def map_raw_to_tiles(data, fix_that_one_tile=True):
     """Maps images from the raw format output by the fccd to a stack of tiles
 
     This function accepts either a single frame, or an array of frames.
@@ -59,7 +59,6 @@ def map_raw_to_tiles(data):
     just filled with zeros, but leaves all the non-physical regions, which
     can possibly be used for background subtraction.
     """
-    
     top_half = data[...,:full_tile_height,:]
 
     # The bottom half is rotated 180 degrees so that the detector seam is
@@ -82,6 +81,8 @@ def map_raw_to_tiles(data):
     bottom_tiles = stack_tiles(bottom_half)
 
     tiles = t.cat([top_tiles, bottom_tiles], dim=-3)
+    
+    tiles[...,59,:,:] = tiles[...,59,:,:].roll(-1,dims=-1)
     return tiles
 
 
@@ -148,7 +149,7 @@ def make_saturation_mask(exp_tiles, radius=1, include_wing_shadows=False):
     in the 0th order. These occur two tiles outward from the saturated regions.
     """
 
-    mask = t.zeros(exp_tiles.shape)
+    mask = t.zeros(exp_tiles.shape, device=exp_tiles.device)
 
     # We want to exclude the overscan here, because there are some overscan
     # pixels at the corner points of the tiles which saturate, not because
@@ -156,7 +157,7 @@ def make_saturation_mask(exp_tiles, radius=1, include_wing_shadows=False):
     # dilate the mask, we end up masking off nearby good pixels.
     mask[...,1:-1,1:-1] = exp_tiles[...,1:-1,1:-1] >= saturation_level
     
-    kernel = t.ones([radius*2+1,radius*2+1])
+    kernel = t.ones([radius*2+1,radius*2+1], device=exp_tiles.device)
     mask = convolve2d(mask, kernel) >= 1
 
     if include_wing_shadows:
@@ -190,7 +191,7 @@ def apply_overscan_background_subtraction(tiles, max_correction=50):
     
     background_estimate = t.minimum(tiles[...,:,0], tiles[...,:,11])
     
-    med_width = 5 # The median will be calculated over 2*med_width+1 pixels
+    med_width = 10 # The median will be calculated over 2*med_width+1 pixels
     
     # This will pad only the last dimension (the dimension along the columns).
     # The padding will alleviate edge effects with the median filter
@@ -201,7 +202,7 @@ def apply_overscan_background_subtraction(tiles, max_correction=50):
     # This places sequential slices of the background estimate along a new
     # dimension, so the median can be calculated as a single kernel
     unfolded_background = padded_bk.unfold(-1, 2*med_width+1,1)
-    background_median = t.median(unfolded_background, dim=-1)[0]
+    background_estimate = t.median(unfolded_background, dim=-1)[0]
 
     # We apply a maximum to the background estimate, because sometimes saturated
     # pixels will bloom into the overscan, causing the background estimate to
@@ -268,7 +269,8 @@ def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
     In the future, I want to use the value from the shortest exposure. In
     the case of ties, the first exposure with the minimum time will be used.
     """
-    exposure_times = t.as_tensor(exposure_times)
+    exposure_times = t.as_tensor(exposure_times,
+                                 dtype=frames.dtype, device=frames.device)
     # This sets up the masks that we need if we plan to use all the exposures
     num_trailing_dimensions = len(frames[0].shape)
     inverse_masks = ~masks

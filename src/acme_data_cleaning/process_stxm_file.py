@@ -50,24 +50,23 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
         exposure_times = np.array([metadata['dwell1']])
         if verbose:
             print('File uses single exposures')
-
-
+    
+    
     with file_handling.create_cxi(output_filename, metadata) as cxi_file:
         if default_mask is not None:
             file_handling.add_mask(cxi_file, default_mask)
             
         darks = file_handling.read_mean_darks_from_stxm(
             stxm_file, n_exp_per_point=n_exp_per_point, device=device)
-
+    
         # we pre-map the darks to tile format, which avoids needing to redo
         # this computation every cycle
         darks = tuple(image_handling.map_raw_to_tiles(dark) for dark in darks)
-
         # This just creates the generator, the actual data isn't loaded until
         # we iterate through it.
         chunked_exposures = file_handling.read_chunked_exposures_from_stxm(
             stxm_file, chunk_size=chunk_size,
-            n_exp_per_point=n_exp_per_point)
+            n_exp_per_point=n_exp_per_point, device=device)
         
         for idx, exps in enumerate(chunked_exposures):
             if verbose:
@@ -78,6 +77,7 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
                                                 include_overscan=False)
 
                                         for exp, dark in zip(exps, darks)))
+
             # Because combine_exposures works with an arbitrary number of
             # exposures, we just always use it, and avoid needing a separate
             # case for the single and double exposure processing.
@@ -85,7 +85,7 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
                 image_handling.combine_exposures(
                     t.stack(cleaned_exps), t.stack(masks), exposure_times)
             chunk_translations = np.array(translations[idx*chunk_size:(idx+1)*chunk_size])
-
+            print(synthesized_exps.dtype)
             chunk_translations[:,:2] = np.matmul(default_shear, chunk_translations[:,:2].transpose()).transpose()
             
             file_handling.add_frames(cxi_file,
@@ -105,8 +105,14 @@ def main(argv=sys.argv):
     parser.add_argument('--chunk_size','-c', type=int, default=10, help='The chunk size for data processing, default is 10.')
     parser.add_argument('--compression', type=str, default='lzf', help='What hdf5 compression filter to use on the output CCD data. Default is lzf.')
     parser.add_argument('--succinct', action='store_true', help='Turns off verbose output')
+    parser.add_argument('--cpu', action='store_true', help='Run everything on the cpu')
     
     args = parser.parse_args()
+    if args.cpu:
+        device = 'cpu'
+    else:
+        # TODO: offer more flexibility in the GPU choice
+        device='cuda:0'
     
     stxm_filenames = args.stxm_file
 
@@ -137,7 +143,7 @@ def main(argv=sys.argv):
                          chunk_size=args.chunk_size,
                          verbose=not args.succinct,
                          compression=args.compression.lower().strip(),
-                         default_mask=default_mask)
+                         default_mask=default_mask, device=device)
 
 
 if __name__ == '__main__':

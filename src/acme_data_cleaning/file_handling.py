@@ -290,7 +290,7 @@ def add_frames(cxi_file, frames, translations, masks=None, intensities=None,
         chunk_shape = (1,) + frames.shape[-2:]
         max_shape = (None,) + frames.shape[-2:]
         cxi_file.create_dataset(groups['detector'] + 'data',
-                                data=frames,
+                                data=frames.cpu().numpy(),
                                 chunks=chunk_shape,
                                 maxshape=max_shape,
                                 compression=compression)
