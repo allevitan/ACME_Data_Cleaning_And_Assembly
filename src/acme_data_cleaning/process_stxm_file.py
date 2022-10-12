@@ -85,7 +85,6 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
                 image_handling.combine_exposures(
                     t.stack(cleaned_exps), t.stack(masks), exposure_times)
             chunk_translations = np.array(translations[idx*chunk_size:(idx+1)*chunk_size])
-            print(synthesized_exps.dtype)
             chunk_translations[:,:2] = np.matmul(default_shear, chunk_translations[:,:2].transpose()).transpose()
             
             file_handling.add_frames(cxi_file,
@@ -113,6 +112,11 @@ def main(argv=sys.argv):
     else:
         # TODO: offer more flexibility in the GPU choice
         device='cuda:0'
+
+    if args.compression.lower().strip() == 'none':
+        args.compression = None
+    else:
+        args.compression = args.compression.lower().strip()
     
     stxm_filenames = args.stxm_file
 
@@ -142,7 +146,7 @@ def main(argv=sys.argv):
             process_file(stxm_file, output_filename,
                          chunk_size=args.chunk_size,
                          verbose=not args.succinct,
-                         compression=args.compression.lower().strip(),
+                         compression=args.compression,
                          default_mask=default_mask, device=device)
 
 
