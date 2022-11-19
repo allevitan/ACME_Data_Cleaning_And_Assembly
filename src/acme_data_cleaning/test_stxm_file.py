@@ -8,8 +8,10 @@ import numpy as np
 import torch as t
 import h5py
 import glob
+from cdtools.tools import plotting as p
+from matplotlib import pyplot as plt
 from acme_data_cleaning import image_handling, file_handling
-
+from PIL import Image
 # The shear calculations are so fast, there's no point in doing them
 # on the GPU
 default_shear = np.array([[ 0.99961877, -0.06551266],
@@ -56,28 +58,47 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
         if default_mask is not None:
             file_handling.add_mask(cxi_file, default_mask)
             
-        darks = file_handling.read_mean_darks_from_stxm(
+        darks = file_handling.read_darks_from_stxm(
             stxm_file, n_exp_per_point=n_exp_per_point, device=device)
-    
-        # we pre-map the darks to tile format, which avoids needing to redo
-        # this computation every cycle
+        darks = list(darks)
+        chunked_exposures = [(t.stack([d[0] for d in darks[10:]]),
+                              t.stack([d[1] for d in darks[10:]]))]
+        darks = (t.mean(t.stack([d[0] for d in darks[:10]]),dim=0),
+                 t.mean(t.stack([d[1] for d in darks[:10]]),dim=0))
+
         darks = tuple(image_handling.map_raw_to_tiles(dark) for dark in darks)
-        # This just creates the generator, the actual data isn't loaded until
-        # we iterate through it.
+
         chunked_exposures = file_handling.read_chunked_exposures_from_stxm(
             stxm_file, chunk_size=chunk_size,
             n_exp_per_point=n_exp_per_point, device=device)
-        
+
+        chunked_exposures = [next(chunked_exposures) for i in range(4)]
         for idx, exps in enumerate(chunked_exposures):
             if verbose:
                 print('Processing frames', idx*chunk_size,
                       'to', (idx+1)*chunk_size-1, end='\r')
-
+            #darks = [0 * dark for dark in darks]
             cleaned_exps, masks = zip(*(image_handling.process_frame(exp, dark,
-                                                include_overscan=False)
+                                                                     include_overscan=True)
 
                                         for exp, dark in zip(exps, darks)))
-
+            double_summed = (cleaned_exps[1][...,::2,::2] +
+                             cleaned_exps[1][...,::2,1::2] +
+                             cleaned_exps[1][...,1::2,::2] +
+                             cleaned_exps[1][...,1::2,1::2])
+            
+            print(t.min(t.mean(cleaned_exps[1],dim=0)))
+            #image = Image.fromarray(t.mean(cleaned_exps[1],dim=0).cpu().numpy())
+            #image.save('demo_image_streaks_magnetic_300ms.tif')
+            p.plot_real(cleaned_exps[1][...,200:,:])
+            p.plot_real(t.mean(cleaned_exps[1][...,:,:],dim=0))
+            p.plot_real(t.mean(double_summed[...,100:,:],dim=0))
+            plt.figure()
+            print('')
+            print(np.std(cleaned_exps[1][...,200:,:].cpu().numpy().ravel()))
+            plt.hist(cleaned_exps[1].cpu().numpy().ravel(), bins=np.linspace(-7,7,100))
+            plt.show()
+            exit()
             # Because combine_exposures works with an arbitrary number of
             # exposures, we just always use it, and avoid needing a separate
             # case for the single and double exposure processing.

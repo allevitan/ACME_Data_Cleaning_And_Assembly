@@ -59,6 +59,10 @@ def map_raw_to_tiles(data, fix_that_one_tile=True):
     just filled with zeros, but leaves all the non-physical regions, which
     can possibly be used for background subtraction.
     """
+    #from matplotlib import pyplot as plt
+    #from cdtools.tools import plotting as p
+    #p.plot_real(data)
+    #plt.show()
     top_half = data[...,:full_tile_height,:]
 
     # The bottom half is rotated 180 degrees so that the detector seam is
@@ -188,7 +192,7 @@ def apply_overscan_background_subtraction(tiles, max_correction=50):
     because the median filter does better at avoiding "bleed" from saturation
     within the 0th order to outside the 0th order.
     """
-    
+    #background_estimate = t.min(tiles, dim=-1)[0]
     background_estimate = t.minimum(tiles[...,:,0], tiles[...,:,11])
     
     med_width = 10 # The median will be calculated over 2*med_width+1 pixels
@@ -198,7 +202,7 @@ def apply_overscan_background_subtraction(tiles, max_correction=50):
     pad_shape = (med_width, med_width)   
     padded_bk = t.nn.functional.pad(background_estimate,
                                     pad_shape, mode='replicate')
-
+    
     # This places sequential slices of the background estimate along a new
     # dimension, so the median can be calculated as a single kernel
     unfolded_background = padded_bk.unfold(-1, 2*med_width+1,1)
@@ -209,15 +213,18 @@ def apply_overscan_background_subtraction(tiles, max_correction=50):
     # become unreasonably large. However, we don't apply a minimum, because
     # saturation can also cause large negative changes to the background which
     # are real, and do show up in the overscan.
-    background_estimate = t.minimum(background_estimate,
-                                    t.as_tensor(max_correction))
+    background_estimate = t.clamp(background_estimate, max=max_correction)
 
     # 0.55 is emperically the difference between the average minimum value
     # of the two outer pixels in a row, and the mean of that row when
     # in a region which is not illuminated. This arises because the minimum is
     # a biased estimator, and this accounts for that bias
-    return t.maximum(tiles -  background_estimate[...,None] - 0.55,
-                     t.as_tensor(0))
+
+    #threshold = 1
+    #thing = tiles - background_estimate[...,None]
+    #return t.clamp(thing - 0.55, min=threshold) - threshold * (thing < threshold)
+    #return t.clamp(tiles - background_estimate[...,None] - 2, min=0)
+    return t.clamp(tiles -  background_estimate[...,None] - 0.55, min=-5)
 
 
 def process_frame(exp, dark, mask=None,
