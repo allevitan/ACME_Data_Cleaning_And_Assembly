@@ -16,7 +16,8 @@ default_shear = np.array([[ 0.99961877, -0.06551266],
                           [ 0.02651655,  0.99879594]])
 
 def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
-                 compression='lzf', default_mask=None, device='cpu'):
+                 compression='lzf', default_mask=None, device='cpu',
+                 sl=np.s_[:,:,:]):
     #
     # We first read the metadata
     #
@@ -50,15 +51,15 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
         exposure_times = np.array([metadata['dwell1']])
         if verbose:
             print('File uses single exposures')
-    
-    
+
+
     with file_handling.create_cxi(output_filename, metadata) as cxi_file:
         if default_mask is not None:
             file_handling.add_mask(cxi_file, default_mask)
             
         darks = file_handling.read_mean_darks_from_stxm(
             stxm_file, n_exp_per_point=n_exp_per_point, device=device)
-    
+
         # we pre-map the darks to tile format, which avoids needing to redo
         # this computation every cycle
         darks = tuple(image_handling.map_raw_to_tiles(dark) for dark in darks)
@@ -84,13 +85,14 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
             synthesized_exps, synthesized_masks = \
                 image_handling.combine_exposures(
                     t.stack(cleaned_exps), t.stack(masks), exposure_times)
+
             chunk_translations = np.array(translations[idx*chunk_size:(idx+1)*chunk_size])
             chunk_translations[:,:2] = np.matmul(default_shear, chunk_translations[:,:2].transpose()).transpose()
             
             file_handling.add_frames(cxi_file,
-                                     synthesized_exps,
+                                     synthesized_exps[sl],
                                      chunk_translations,
-                                     masks=synthesized_masks,
+                                     masks=synthesized_masks[sl],
                                      compression=compression)
 
         print('Finished processing                                          ')
@@ -105,6 +107,9 @@ def main(argv=sys.argv):
     parser.add_argument('--compression', type=str, default='lzf', help='What hdf5 compression filter to use on the output CCD data. Default is lzf.')
     parser.add_argument('--succinct', action='store_true', help='Turns off verbose output')
     parser.add_argument('--cpu', action='store_true', help='Run everything on the cpu')
+    parser.add_argument('--center', type=int, nargs=2)
+    parser.add_argument('--radius', type=int)
+    
     
     args = parser.parse_args()
     if args.cpu:
@@ -119,12 +124,22 @@ def main(argv=sys.argv):
         args.compression = args.compression.lower().strip()
     
     stxm_filenames = args.stxm_file
+    
+    # Now we create the data slice
+    if args.center is None:
+        args.center = [480,480]
+    if args.radius is None:
+        sl = np.s_[:,:,:]
+    else:
+        sl = np.s_[:,args.center[0]-args.radius:args.center[0]+args.radius,
+                   args.center[1]-args.radius:args.center[1]+args.radius]
+
 
     # Default mask, TODO: should be loaded from a file
     default_mask = t.zeros([960,960])
     default_mask[:480,840:] = 1
     default_mask[:480,590] = 1
-    default_mask = default_mask.swapaxes(-1,-2).flip(-1,-2)
+    default_mask = default_mask.swapaxes(-1,-2).flip(-1,-2)[sl[1:]]
 
     # Here we make globbing work nicely for files
     expanded_stxm_filenames = []
@@ -147,7 +162,8 @@ def main(argv=sys.argv):
                          chunk_size=args.chunk_size,
                          verbose=not args.succinct,
                          compression=args.compression,
-                         default_mask=default_mask, device=device)
+                         default_mask=default_mask, device=device,
+                         sl=sl)
 
 
 if __name__ == '__main__':
