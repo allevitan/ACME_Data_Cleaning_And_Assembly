@@ -3,8 +3,8 @@ import h5py
 from acme_data_cleaning import image_handling
 from acme_data_cleaning import file_handling
 import sys
-from jax import numpy as np
-import numpy as onp
+import torch as t
+import numpy as np
 
 # How should I structure this? I'll get 4 kinds of events, and each event
 # needs to:
@@ -17,8 +17,8 @@ import numpy as onp
 # 2) All the darks which have been collected on this scan
 # 3) All the metadata for the scan
 
-default_shear = onp.array([[ 0.99961877, -0.06551266],
-                           [ 0.02651655,  0.99879594]])
+default_shear = np.array([[ 0.99961877, -0.06551266],
+                          [ 0.02651655,  0.99879594]])
 
 
 def make_new_state():
@@ -49,11 +49,11 @@ def process_start_event(cxi_file, state, event, pub):
 
     if state['metadata']['double_exposure']:
         # TODO: If this gets swapped, fix it.
-        state['dwells'] = onp.array([state['metadata']['dwell2'],
+        state['dwells'] = np.array([state['metadata']['dwell2'],
                                     state['metadata']['dwell1']])
 
     else:
-        state['dwells'] = onp.array([state['metadata']['dwell1']])
+        state['dwells'] = np.array([state['metadata']['dwell1']])
         
     psize = float(state['metadata']['geometry']['psize'])
     basis = np.array([[0,-psize,0],[-psize,0,0]])
@@ -81,7 +81,7 @@ def process_dark_event(cxi_file, state, event, pub):
     #'dwell' is where the dwell time is saved
     dwell = event['data']['dwell']
     dark = image_handling.map_raw_to_tiles(
-        np.array(event['data']['ccd_frame']))
+        t.as_tensor(np.array(event['data']['ccd_frame'])))
     if state['darks'][dwell] is None:
         state['darks'][dwell] = dark
     else:
@@ -104,16 +104,16 @@ def finalize_frame(cxi_file, state, event, pub):
 
     if len(all_frames) == 0:
         return 
-    all_dwells = np.array(all_dwells)
-    all_frames = np.array(all_frames)
-    all_masks = np.array(all_masks)
+    all_dwells = t.as_tensor(np.array(all_dwells))
+    all_frames = t.as_tensor(np.array(all_frames))
+    all_masks = t.as_tensor(np.array(all_masks))
 
     combined_frame, combined_mask = image_handling.combine_exposures(
         all_frames, all_masks, all_dwells)
 
-    combined_frame = onp.array(combined_frame)
+    combined_frame = np.array(combined_frame)
     
-    basis = onp.array(state['metadata']['geometry']['basis_vectors']).transpose()
+    basis = np.array(state['metadata']['geometry']['basis_vectors']).transpose()
     output_event = {
         'event':'frame',
         'data': combined_frame,
@@ -133,11 +133,11 @@ def process_exp_event(cxi_file, state, event, pub):
         return
     print('Processing exp event',event['data']['index'])
     
-    state['position'] = onp.array([-event['data']['xPos'],
+    state['position'] = np.array([-event['data']['xPos'],
                                    -event['data']['yPos']])
 
     # A correction for the shear in the probe positions
-    state['position'] = onp.matmul(default_shear, state['position'])
+    state['position'] = np.matmul(default_shear, state['position'])
 
     dwell = event['data']['dwell']
     dark = state['darks'][dwell]
