@@ -6,6 +6,11 @@ import sys
 import torch as t
 import numpy as np
 
+# This is apparently the best-practice way to load config files from within
+# the package
+import importlib.resources
+import json
+
 # How should I structure this? I'll get 4 kinds of events, and each event
 # needs to:
 # 1) update the state of the processor
@@ -17,8 +22,6 @@ import numpy as np
 # 2) All the darks which have been collected on this scan
 # 3) All the metadata for the scan
 
-default_shear = np.array([[ 0.99961877, -0.06551266],
-                          [ 0.02651655,  0.99879594]])
 
 
 def make_new_state():
@@ -112,7 +115,7 @@ def finalize_frame(cxi_file, state, event, pub):
         all_frames, all_masks, all_dwells)
 
     combined_frame = np.array(combined_frame)
-    
+
     basis = np.array(state['metadata']['geometry']['basis_vectors']).transpose()
     output_event = {
         'event':'frame',
@@ -127,7 +130,7 @@ def finalize_frame(cxi_file, state, event, pub):
 
     
 
-def process_exp_event(cxi_file, state, event, pub):
+def process_exp_event(cxi_file, state, event, pub, config):
     if state['metadata'] is None:
         print('Never got a start event, not processing')
         return
@@ -137,7 +140,7 @@ def process_exp_event(cxi_file, state, event, pub):
                                    -event['data']['yPos']])
 
     # A correction for the shear in the probe positions
-    state['position'] = np.matmul(default_shear, state['position'])
+    state['position'] = np.matmul(config['shear'], state['position'])
 
     dwell = event['data']['dwell']
     dark = state['darks'][dwell]
@@ -168,12 +171,38 @@ def process_stop_event(cxi_file, state, event, pub):
     pass
 
 def main(argv=sys.argv):
+
+    package_root = importlib.resources.files('acme_data_cleaning')
+    # This loads the default configuration first. This file is managed by
+    # git and should not be edited by a user
+    config = json.loads(package_root.joinpath('defaults.json').read_text())\
+
+    # And now, if the user has installed an optional config file, we allow it
+    # to override what is in defaults.json
+    config_file_path = package_root.joinpath('config.json')
+
+    # not sure if this works with zipped packages
+    if config_file_path.exists():
+        config.update(json.loads(config_file_path.read_text()))
+
+    config['shear'] = np.array(config['shear'])
+
+    # TODO: This is not currently used, because I don't want to actually
+    # edit this data, I just want to includ ethe mask in the saved .cxi file.
+    # currently, this doesn't actually save a .cxi file.
+    # Load the default mask from a file. This may not work for
+    # zipped packages, I don't know
+    with h5py.File(package_root.joinpath('default_mask.h5'), 'r') as f:
+        default_mask = t.as_tensor(np.array(f['mask']))
+        # Crop out the correct part of the mask
+        # default_mask = default_mask[sl[1:]]
+    
     context = zmq.Context()
     sub = context.socket(zmq.SUB)
-    sub.connect('tcp://localhost:37012')
+    sub.connect(config['subscription_port'])
     sub.setsockopt(zmq.SUBSCRIBE, b'')
     pub = context.socket(zmq.PUB)
-    pub.bind("tcp://*:37013")
+    pub.bind(config['broadcast_port'])
 
     state = make_new_state()
     cxi_file = None
@@ -192,7 +221,7 @@ def main(argv=sys.argv):
             if event['data']['ccd_mode'] == 'dark':
                 process_dark_event(cxi_file, state, event, pub)
             else:
-                process_exp_event(cxi_file, state, event, pub)
+                process_exp_event(cxi_file, state, event, pub, config)
 
 
 if __name__ == '__main__':

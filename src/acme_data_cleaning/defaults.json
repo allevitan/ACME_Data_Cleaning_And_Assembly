@@ -1,0 +1,6 @@
+{
+    "broadcast_port" : "tcp://*:37013",
+    "subscription_port" : "tcp://localhost:37012",
+    "shear" : [[ 0.99961877, -0.06551266],
+               [ 0.02651655,  0.99879594]]
+}
