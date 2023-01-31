@@ -1,7 +1,7 @@
 import zmq
 import h5py
-from acme_data_cleaning import image_handling
-from acme_data_cleaning import file_handling
+from contextlib import contextmanager
+from acme_data_cleaning import image_handling, file_handling
 import sys
 import torch as t
 import numpy as np
@@ -36,7 +36,12 @@ def make_new_state():
         'position': None
     }
 
-def process_start_event(cxi_file, state, event, pub):
+
+# I wrote this as a context manager because the natural pattern is for it
+# to return an open .cxi file. As a context manager, we can make sure that
+# those files are always properly closed. 
+@contextmanager
+def process_start_event(cxi_file, state, event, pub, mask=None):
     print('Processing start event')
     pub.send_pyobj(event)
     if state['metadata'] is not None:
@@ -68,13 +73,33 @@ def process_start_event(cxi_file, state, event, pub):
     state['n_darks'] = {dwell: 0 for dwell in state['dwells']}
 
     # First, I need to find the right filename to save the .cxi file in
-    # cxi_file = file
-
+    output_filename = make_output_filename(state)
+    
+    # Next, we assemble the metadata dictionary
+    metadata = {}
+    
     # Next, I need to create and leave open that .cxi file
+    with file_handling.create_cxi(output_filename, metadata) as cxi_file:
+        # We should add the mask at this point
+        if mask is not None:
+            file_handling.add_mask(cxi_file, mask)
 
-    # For now, I'm not bothering to actually save the .cxi file
-    return None
+        yield cxi_file
 
+
+def make_output_filename(state):
+    # TODO: Make this work!
+    # What goes into the defaul filename
+    # There is the date, scan number, region number, and energy number
+    date = '220925' # probably best to get this info from the scan data,
+    # if it exists, so there's no chance of it being saved under a different
+    # name from the .stxm file
+    scan_no = '%03d' '006'
+    region_no = str(0)
+    energy_no = str(0)
+    return ('NS_' + date + scan_no + '_ccdframes_'
+            + region_no + '_' + energy_no + '.cxi')
+    
 
 def process_dark_event(cxi_file, state, event, pub):
     if state['metadata'] is None:
@@ -128,10 +153,12 @@ def finalize_frame(cxi_file, state, event, pub):
     state['current_exposures'] = {dwell: [] for dwell in state['dwells']}
     state['current_masks'] = {dwell: [] for dwell in state['dwells']}
 
-    
 
 def process_exp_event(cxi_file, state, event, pub, config):
     if state['metadata'] is None:
+        # This is just a backup check, the upstream logic *should* prevent
+        # this from getting triggered in the absence of a start event
+
         print('Never got a start event, not processing')
         return
     print('Processing exp event',event['data']['index'])
@@ -156,19 +183,58 @@ def process_exp_event(cxi_file, state, event, pub, config):
     # We always need to do this
     state['current_exposures'][dwell].append(frame)
     state['current_masks'][dwell].append(mask)
+
+
+def trigger_ptycho(cxi_file, state, rec_trigger):
+    output_filename = make_output_filename(state)
+    print('TODO: trigger a ptychography reconstruction')
+
+def process_stop_event(cxi_file, state, event, pub, rec_trigger):
+    if state['metadata'] is None:
+        # This is just a backup check, the upstream logic *should* prevent
+        # this from getting triggered in the absence of a start event
+        print('Never got a start event, not processing')
+        return
+    
+    print('Processing stop event')
+    finalize_frame(cxi_file, state, event, pub)
+    trigger_ptycho(cxi_file, state, rec_trigger)
+    pub.send_pyobj(event)
+
+
+def process_emergency_stop(cxi_file, state, pub, rec_trigger):
+    """This is triggered if no stop event happens, but we get a second
+    start event. In this case, we just finish the scan without any of the
+    info in the stop event.
+    """
+    print('Doing an emergency stop')
+    finalize_frame(cxi_file, state, pub)
+    trigger_ptycho(cxi_file, state, rec_trigger)
+    # Should we create a fake stop event to pass along? I think we shouldn't,
+    # but if we decide to, this would be some of the code
+    #pub.send_pyobj(event)
     
 
 
-def process_stop_event(cxi_file, state, event, pub):
-    if state['metadata'] is None:
-        print('Never got a start event, not processing')
-        return
-    print('Processing stop event')
-    finalize_frame(cxi_file, state, event, pub)
-    pub.send_pyobj(event)
-    if cxi_file is not None:
-        cxi_file.close()
-    pass
+def run_data_accumulation_loop(cxi_file, state, event,
+                               sub, pub, rec_trigger, config):
+    while True:
+        event = sub.recv_pyobj()
+        
+        if event['event'].lower().strip() == 'start':
+            process_emergency_stop(cxi_file, state, pub, rec_trigger)
+            return event # pass the event back so we can start a new loop
+
+        if event['event'].lower().strip() == 'stop':
+            process_stop_event(cxi_file, state, event, pub, rec_trigger)
+            return None
+                    
+        elif event['event'].lower().strip() == 'frame':
+            if event['data']['ccd_mode'] == 'dark':
+                process_dark_event(cxi_file, state, event, pub)
+            else:
+                process_exp_event(cxi_file, state, event, pub, config)
+
 
 def main(argv=sys.argv):
 
@@ -196,32 +262,35 @@ def main(argv=sys.argv):
         default_mask = t.as_tensor(np.array(f['mask']))
         # Crop out the correct part of the mask
         # default_mask = default_mask[sl[1:]]
-    
+    print(config)
     context = zmq.Context()
     sub = context.socket(zmq.SUB)
     sub.connect(config['subscription_port'])
     sub.setsockopt(zmq.SUBSCRIBE, b'')
     pub = context.socket(zmq.PUB)
     pub.bind(config['broadcast_port'])
+    rec_trigger = context.socket(zmq.PUB)
+    rec_trigger.bind(config['broadcast_port'])
 
     state = make_new_state()
-    cxi_file = None
+    start_event = None
     while True:
-        event = sub.recv_pyobj()
+        # This logic allows us to deal with cases where the 'stop' event
+        # doesn't make it to the program. In that case, we need to keep the
+        # second 'start' event around after we read it to start the next file
+        if start_event is None:
+            event = sub.recv_pyobj()
+        else:
+            event = start_event
+            start_event = None
+            
         if event['event'].lower().strip() == 'start':
-            cxi_file = process_start_event(cxi_file, state, event, pub)
+            with process_start_event(state, event, pub,
+                                     mask=default_mask) as cxi_file:
+                start_event = run_data_accumulation_loop(
+                    cxi_file, state, event, sub, pub, rec_trigger, config)
+                state = make_new_state()
 
-        elif event['event'].lower().strip() == 'stop':
-            process_stop_event(cxi_file, state, event, pub)
-            # remove reference to the file so we know we're not writing
-            cxi_file = None
-            state = make_new_state()
-
-        elif event['event'].lower().strip() == 'frame':
-            if event['data']['ccd_mode'] == 'dark':
-                process_dark_event(cxi_file, state, event, pub)
-            else:
-                process_exp_event(cxi_file, state, event, pub, config)
 
 
 if __name__ == '__main__':
