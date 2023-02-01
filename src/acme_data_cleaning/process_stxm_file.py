@@ -8,7 +8,7 @@ import numpy as np
 import torch as t
 import h5py
 import glob
-from acme_data_cleaning import image_handling, file_handling
+from acme_data_cleaning import image_handling, file_handling, config_handling
 
 # This is apparently the best-practice way to load config files from within
 # the package
@@ -101,74 +101,44 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
 
 def main(argv=sys.argv):
 
+    # This argument reading setup is a bit bizarre. The idea is that all the
+    # arguments will have default values, which are stored in the configuration
+    # file. If any are overridden by being explicitly set, then that will
+    # override the values in the configuration file
+    
     parser = argparse.ArgumentParser()
 
     parser.add_argument('stxm_file', nargs='+', type=str, help='The file or files to process, allowing for unix globbing')
-    parser.add_argument('--mask','-m', type=str, default='', help='A custom mask file to use, if the default is not appropriate')
-    parser.add_argument('--chunk_size','-c', type=int, default=10, help='The chunk size for data processing, default is 10.')
-    parser.add_argument('--compression', type=str, default='lzf', help='What hdf5 compression filter to use on the output CCD data. Default is lzf.')
-    parser.add_argument('--succinct', action='store_true', help='Turns off verbose output')
-    parser.add_argument('--cpu', action='store_true', help='Run everything on the cpu')
-    parser.add_argument('--center', type=int, nargs=2)
-    parser.add_argument('--radius', type=int)
-    
-    
+    config_handling.add_processing_args(parser)
+        
+    # We parse the input command line args
     args = parser.parse_args()
-    if args.cpu:
-        device = 'cpu'
-    else:
-        # TODO: offer more flexibility in the GPU choice
-        device='cuda:0'
-
-    if args.compression.lower().strip() == 'none':
-        args.compression = None
-    else:
-        args.compression = args.compression.lower().strip()
     
-    stxm_filenames = args.stxm_file
+    config = config_handling.get_configuration()
+
+    config = config_handling.blend_args_with_config(args, config)
     
-    # Now we create the data slice
-    if args.center is None:
-        args.center = [480,480]
-    if args.radius is None:
-        sl = np.s_[:,:,:]
+
+    device = config['device']
+    
+    
+    if config['compression'].lower().strip() == 'none':
+        compression = None
     else:
-        sl = np.s_[:,args.center[0]-args.radius:args.center[0]+args.radius,
-                   args.center[1]-args.radius:args.center[1]+args.radius]
-
-
-    package_root = importlib.resources.files('acme_data_cleaning')
-    # This loads the default configuration first. This file is managed by
-    # git and should not be edited by a user
-    config = json.loads(package_root.joinpath('defaults.json').read_text())\
-
-    # And now, if the user has installed an optional config file, we allow it
-    # to override what is in defaults.json
-    config_file_path = package_root.joinpath('config.json')
-
-    # not sure if this works with zipped packages
-    if config_file_path.exists():
-        config.update(json.loads(config_file_path.read_text()))
-
-    config['shear'] = np.array(config['shear'])
-
-    # Set the mask path, either to the default or to a specific mask if it
-    # was set as a command line arg
-    mask_path = package_root.joinpath('default_mask.h5')
-    if args.mask != '':
-        mask_path = args.mask
+        compression = config['compression'].lower().strip()
+    
     
     # Load the default mask from a file. This may not work for
     # zipped packages, I don't know
-    with h5py.File(mask_path, 'r') as f:
+    with h5py.File(config['mask'], 'r') as f:
         default_mask = t.as_tensor(np.array(f['mask']))
-        # Crop out the correct part of the mask
-        default_mask = default_mask[sl[1:]]
 
+    # TODO: We need to make the data binning and resampling code work properly
+    # with the masks, and produce appropriate masks for the downsampled data!
             
     # Here we make globbing work nicely for files
     expanded_stxm_filenames = []
-    for stxm_filename in stxm_filenames:
+    for stxm_filename in args.stxm_file:
         filenames = glob.glob(stxm_filename)
         if len(filenames) == 0:
             print('WARNING:',stxm_filename,'did not match any files.')
@@ -184,12 +154,11 @@ def main(argv=sys.argv):
             
         with h5py.File(stxm_filename, 'r') as stxm_file:
             process_file(stxm_file, output_filename,
-                         chunk_size=args.chunk_size,
-                         verbose=not args.succinct,
-                         compression=args.compression,
+                         chunk_size=config['chunk_size'],
+                         verbose=not config['succinct'],
+                         compression=config['compression'],
                          shear=config['shear'],
-                         default_mask=default_mask, device=device,
-                         sl=sl)
+                         default_mask=default_mask, device=config['device'])
 
 
 if __name__ == '__main__':

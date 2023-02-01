@@ -153,6 +153,14 @@ def finalize_frame(cxi_file, state, event, pub):
     state['current_exposures'] = {dwell: [] for dwell in state['dwells']}
     state['current_masks'] = {dwell: [] for dwell in state['dwells']}
 
+    file_handling.add_frame(cxi_file,
+                            combined_frame,
+                            synthesized_exps[sl],
+                            chunk_translations,
+                            masks=synthesized_masks[sl],
+                            compression=compression)
+    
+    
 
 def process_exp_event(cxi_file, state, event, pub, config):
     if state['metadata'] is None:
@@ -185,7 +193,7 @@ def process_exp_event(cxi_file, state, event, pub, config):
     state['current_masks'][dwell].append(mask)
 
 
-def trigger_ptycho(cxi_file, state, rec_trigger):
+def trigger_ptycho(state, rec_trigger):
     output_filename = make_output_filename(state)
     print('TODO: trigger a ptychography reconstruction')
 
@@ -209,7 +217,6 @@ def process_emergency_stop(cxi_file, state, pub, rec_trigger):
     """
     print('Doing an emergency stop')
     finalize_frame(cxi_file, state, pub)
-    trigger_ptycho(cxi_file, state, rec_trigger)
     # Should we create a fake stop event to pass along? I think we shouldn't,
     # but if we decide to, this would be some of the code
     #pub.send_pyobj(event)
@@ -238,6 +245,46 @@ def run_data_accumulation_loop(cxi_file, state, event,
 
 def main(argv=sys.argv):
 
+    parser = argparse.ArgumentParser(
+        prog = 'process_live_data',
+        description = 'Runs a program which listens for raw data being emitted by pystxmcontrol. It assembles and preprocesses this data, saving the results inot .cxi files and passing the cleaned data on for further analysis.')
+    
+    
+    parser.add_argument('--mask','-m', type=str, default='', help='A custom mask file to use, if the default is not appropriate')
+    parser.add_argument('--chunk_size','-c', type=int, default=10, help='The chunk size to use in the output .cxi files, default is 10.')
+    parser.add_argument('--compression', type=str, default='lzf', help='What hdf5 compression filter to use on the output CCD data. Default is lzf.')
+    parser.add_argument('--succinct', action='store_true', help='Turns off verbose output')
+    parser.add_argument('--cpu', action='store_true', help='Run everything on the cpu')
+    parser.add_argument('--center', type=int, nargs=2)
+    ## TODO: Make the radius configurable
+    parser.add_argument('--radius', type=int)
+    # TODO: Plan for the downsampling:
+    
+    
+    args = parser.parse_args()
+    if args.cpu:
+        device = 'cpu'
+    else:
+        # TODO: offer more flexibility in the GPU choice
+        device='cuda:0'
+
+    if args.compression.lower().strip() == 'none':
+        args.compression = None
+    else:
+        args.compression = args.compression.lower().strip()
+    
+    stxm_filenames = args.stxm_file
+    
+    # Now we create the data slice
+    if args.center is None:
+        args.center = [480,480]
+    if args.radius is None:
+        sl = np.s_[:,:,:]
+    else:
+        sl = np.s_[:,args.center[0]-args.radius:args.center[0]+args.radius,
+                   args.center[1]-args.radius:args.center[1]+args.radius]
+
+    
     package_root = importlib.resources.files('acme_data_cleaning')
     # This loads the default configuration first. This file is managed by
     # git and should not be edited by a user
@@ -253,16 +300,12 @@ def main(argv=sys.argv):
 
     config['shear'] = np.array(config['shear'])
 
-    # TODO: This is not currently used, because I don't want to actually
-    # edit this data, I just want to includ ethe mask in the saved .cxi file.
-    # currently, this doesn't actually save a .cxi file.
-    # Load the default mask from a file. This may not work for
-    # zipped packages, I don't know
+    # TODO: include this mask in the saved .cxi file
     with h5py.File(package_root.joinpath('default_mask.h5'), 'r') as f:
         default_mask = t.as_tensor(np.array(f['mask']))
         # Crop out the correct part of the mask
         # default_mask = default_mask[sl[1:]]
-    print(config)
+
     context = zmq.Context()
     sub = context.socket(zmq.SUB)
     sub.connect(config['subscription_port'])
@@ -270,7 +313,7 @@ def main(argv=sys.argv):
     pub = context.socket(zmq.PUB)
     pub.bind(config['broadcast_port'])
     rec_trigger = context.socket(zmq.PUB)
-    rec_trigger.bind(config['broadcast_port'])
+    rec_trigger.bind(config['trigger_reconstruction_port'])
 
     state = make_new_state()
     start_event = None
@@ -289,7 +332,12 @@ def main(argv=sys.argv):
                                      mask=default_mask) as cxi_file:
                 start_event = run_data_accumulation_loop(
                     cxi_file, state, event, sub, pub, rec_trigger, config)
-                state = make_new_state()
+
+            # we need to trigger the ptycho reconstruction after saving the
+            # file, to ensure that the file exists when the reconstruction
+            # begins
+            trigger_ptycho(state, rec_trigger)
+            state = make_new_state()
 
 
 

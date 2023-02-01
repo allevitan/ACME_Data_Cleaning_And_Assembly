@@ -23,8 +23,11 @@ __all__ = [
     'combine_exposures'
 ]
 
+
 #
-# Here we define a few key numbers relating to the detector geometry
+# Here we define a few key numbers relating to the detector geometry. Note
+# That all the terminology here refers to the orientation where the central
+# seam of the detector runs horizontally.
 #
 
 full_tile_height = 487 # The height of each tile, including the overscan.
@@ -32,7 +35,11 @@ full_tile_width = 12 # The width of each tile, including the overscan.
 
 num_tiles_per_half = 96 # The number of tiles in each detector half
 
-# This slice extracts the real data from a tile which include the overscan. 
+# This slice extracts the real data from a tile which include overscan. 
+# Hi Peter Denes: Yes, I know that the overscan SHOULD be on the last two
+# columns, but it is not. So, David, whenever that gets fixed, this is where
+# you'll need to update the code. There are some other places where things
+# will need to be updated: they are marked with a the comment OVERSCANPROBLEMS
 tile_slice = np.s_[...,6:-1,1:-1]
 
 # This is the saturation value in the images that come from the framegrabber.
@@ -83,7 +90,10 @@ def map_raw_to_tiles(data, fix_that_one_tile=True):
     bottom_tiles = stack_tiles(bottom_half)
 
     tiles = t.cat([top_tiles, bottom_tiles], dim=-3)
-    
+
+    # OVERSCANPROBLEMS This fixes a single tile, which appears to have it's
+    # overscan columns different from the rest. If the overscan ever gets
+    # fixed, you can fix that here
     tiles[...,59,:,:] = tiles[...,59,:,:].roll(-1,dims=-1)
     return tiles
 
@@ -93,13 +103,18 @@ def map_tiles_to_frame(tiles, include_overscan=False):
 
     This function accepts either a single frame, or an array of frames.
     
-    This function removes all of the overscan regions, so the final image
-    reflects the actual geometry of the fccd detector
+    By default, this removes all of the overscan regions, so the final image
+    reflects the actual geometry of the fccd detector. If you set
+    include_overscan=True, it will include all the overscan regions
+
+    The output images are laid out so they appear to a viewer as though
+    you are looking downstream, from the sample toward the detector.
     """
 
     # This removes all the extra stuff
     if not include_overscan:
         tiles = tiles[tile_slice]
+        
     top_tiles = tiles[...,:96,:,:]
     bottom_tiles = tiles[...,96:,:,:]
 
@@ -108,6 +123,7 @@ def map_tiles_to_frame(tiles, include_overscan=False):
     bottom_half = bottom_half.flip(-1,-2)
 
     frame = t.cat((top_half, bottom_half), dim=-2)
+    
     #The last thing which needs to be done is a rotation 
     return frame.swapaxes(-1,-2).flip(-2,-1)
 
@@ -139,6 +155,9 @@ def convolve2d(a, b):
 def make_saturation_mask(exp_tiles, radius=1, include_wing_shadows=False):
     """Generates a map of saturated pixels in an exposure.
 
+    The actual mask returned is the set of all saturated pixels, binary
+    dilated by a convolution element with a radius of (by default) 1.
+    
     This function needs to take the non-background-subtracted images, because
     the variable background means that the saturation has a constant value
     before background subtraction, but not after background subtraction.
@@ -157,7 +176,8 @@ def make_saturation_mask(exp_tiles, radius=1, include_wing_shadows=False):
     # pixels at the corner points of the tiles which saturate, not because
     # any nearby signal pixels are saturated. If we include those and then
     # dilate the mask, we end up masking off nearby good pixels.
-    mask[...,1:-1,1:-1] = exp_tiles[...,1:-1,1:-1] >= saturation_level
+    mask[(np.s_[:],) + tile_slice] = \
+        exp_tiles[(np.s_[:],) + tile_slice] >= saturation_level
     
     kernel = t.ones([radius*2+1,radius*2+1], device=exp_tiles.device)
     mask = convolve2d(mask, kernel) >= 1
@@ -172,6 +192,7 @@ def make_saturation_mask(exp_tiles, radius=1, include_wing_shadows=False):
         mask = mask >= 1
 
     return mask
+
 
 def apply_overscan_background_subtraction(tiles, max_correction=50):
     """Applies a frame-to-frame background correction based on the overscan.
@@ -190,7 +211,8 @@ def apply_overscan_background_subtraction(tiles, max_correction=50):
     because the median filter does better at avoiding "bleed" from saturation
     within the 0th order to outside the 0th order.
     """
-    #background_estimate = t.min(tiles, dim=-1)[0]
+    # OVERSCANPROBLEMS This would become the last two columns if the
+    # overscan problem is fixed
     background_estimate = t.minimum(tiles[...,:,0], tiles[...,:,11])
     
     med_width = 10 # The median will be calculated over 2*med_width+1 pixels
@@ -213,15 +235,16 @@ def apply_overscan_background_subtraction(tiles, max_correction=50):
     # are real, and do show up in the overscan.
     background_estimate = t.clamp(background_estimate, max=max_correction)
 
-    # 0.55 is emperically the difference between the average minimum value
-    # of the two outer pixels in a row, and the mean of that row when
-    # in a region which is not illuminated. This arises because the minimum is
-    # a biased estimator, and this accounts for that bias
-
-    #threshold = 1
-    #thing = tiles - background_estimate[...,None]
-    #return t.clamp(thing - 0.55, min=threshold) - threshold * (thing < threshold)
-    #return t.clamp(tiles - background_estimate[...,None] - 2, min=0)
+    # The method above slightly underestimates the background, because we
+    # estimate it using the minimum of the two overscan columns. Because these
+    # measurements themselves have noise, the minimum of the two will tend
+    # to be less than the true background level. Simply put, the minimum
+    # is a biased estimator. We correct for that below
+    
+    # 0.55 comes from an empirical measurement of that underestimation, done
+    # by comparing the estimated background with the mean pixel value in a
+    # region which is not illuminated. If the detector changes, then this
+    # value would change as well.
     return t.clamp(tiles -  background_estimate[...,None] - 0.55, min=-5)
 
 
@@ -308,5 +331,70 @@ def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
 
     return synthesized_frame, synthesized_mask
 
+# We need to have two methods for resampling the raw diffraction patterns:
+# one method which produces defined pixel sizes in real space, at the cost
+# of doing bad things to the data, and the other which treats the data with
+# respect but inevitably produces images with a non-idea real space pixel
+# size
+
+def resample(images, center=None, output_shape=None, binning_factor=1):
+    """This resamples diffraction patterns to produce arbitrary pixel sizes
+
+    This function mirrors the method used in the cosmicp preprocessor, in
+    that it will interpolate the original diffraction pattern to produce an
+    output which captures a stable sampling in reciprocal space. This is
+    best for focused-probe ptychography, when the speckles are not near the
+    pixel size and having easily inrepretable images as a function of energy
+    is important.
+    """
+
+    # First, we convolve the data with a kernel, so that we don't lose
+    # data when we do a linear interpolation over a (possibly sparse)
+    # set of sampling points later.
+    
+    # The convolution kernel can only have an integer size, so we set it
+    # To the floor of the binning factor (but never less than 1!)
+    conv_kernel = t.ones((np.maximum(np.floor(binning_factor), 1),) * 2,
+                         dtype=images.dtype, device=images.device)
+    convolved_images = convolve2d(images, conv_kernel)
+
+    
+    # Now, we can set up the interpolation and resampling of the data
+
+    # This just helps to deal with some quirks of pytorch
+    leading_dimensions = images.shape[:-2]
+    final_dimensions = images.shape[-2:]
+
+    # Now we calculate the points at which we want to sample the data
+    
+    # There could be performance implications if we're recalculating this
+    # every time. One possible option to fix this could be to rewrite this
+    # as a factory function, like what they did in cosmicp
+    I, J = t.meshgrid(output_shape, indexing='ij')
+    I = I - output_shape[0] / 2
+    J = J - output_shape[1] / 2
+    
+    locations = t.stack(((center[0] + I*binning_factor) / final_dimensions[0],
+                         (center[1] + J*binning_factor) / final_dimensions[1]),
+                        dim=-1)
+    
+    # Now we reshape the data and locations, to make pytorch happy
+    reshaped_input = convolved_images.reshape(
+        [np.prod(leading_dimensions),1] + final_dimensions)
+    locations = locations.reshape([1,1] + list(locations.shape))
+
+    # And we finally do the resampling
+    resampled = t.nn.functional.grid_sample(reshaped_input, locations,
+                                            align_corners=True)
+
+    # Before converting back to the original shape
+    output = resampled.reshape(leading_dimensions+final_dimensions)
+    return output
+    
 
 
+def recenter_and_bin(images, center=None, output_shape=None, binning_factor=1):
+    """Recenters and bins a diffraction pattern or set of patterns
+    """
+    pass
+    

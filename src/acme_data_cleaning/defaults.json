@@ -1,7 +1,14 @@
 {
     "broadcast_port" : "tcp://*:37013",
     "subscription_port" : "tcp://localhost:37012",
-    "trigger_reconstruction_port" : "tcp://localhost:37016",
+    "trigger_reconstruction_port" : "tcp://*:37016",
+    "compression" : "lzf",
+    "chunk_size" : 10,
+    "device" : "cuda:0",
+    "resample" : true,
+    "center" : [ 480, 480 ],
+    "output_pixel_count" : [960, 960],
+    "binning_factor" : 1,
     "shear" : [[ 0.99961877, -0.06551266],
                [ 0.02651655,  0.99879594]]
 }
