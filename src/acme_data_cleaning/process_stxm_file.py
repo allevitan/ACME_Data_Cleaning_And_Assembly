@@ -16,9 +16,7 @@ import importlib.resources
 import json
 
 
-def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
-                 compression='lzf', default_mask=None, shear=None, device='cpu',
-                 sl=np.s_[:,:,:]):
+def process_file(stxm_file, output_filename, config, default_mask=None):
     #
     # We first read the metadata
     #
@@ -43,43 +41,103 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
         # dwell2 meaning the first exposure
         exposure_times = np.array([metadata['dwell2'],
                                    metadata['dwell1']])
-        if verbose:
+        if not config['succinct']:
             print('File uses double exposures with exposure times',
                   exposure_times)
     else:
         n_exp_per_point=1
         # It honestly doesn't matter when it's not a double exposure
         exposure_times = np.array([metadata['dwell1']])
-        if verbose:
+        if not config['succinct']:
             print('File uses single exposures')
+    
+                
+    darks = file_handling.read_mean_darks_from_stxm(
+        stxm_file, n_exp_per_point=n_exp_per_point, device=config['device'])
+    
+    # Instantiating the cleaner with the darks allows us to do the
+    # preprocessing on the darks once, not having to repeat it at each
+    # frame
+    frame_cleaner = image_handling.FastCCDFrameCleaner(darks)
+    
+    # Instantiating a resampler at the start allows us to create the
+    # various slices and info needed for the resampling functions
+    # once and reuse that for the full scan
+    
+    # This just gets us the size of the input images
+    dummy_im = frame_cleaner.process_frame(
+        darks[0], 0, include_overscan=False)[0]
+    
+    output_shape = (config['output_pixel_count'],)*2
+    
+    if config['interpolate']:
+        hc = 1.986446e-25 # in Joule-meters
+        energy = metadata['energy'] * 1.60218e-19 # convert to Joules
+        wavelength = hc / energy
+        pixel_pitch = metadata['geometry']['psize']
+        det_distance = metadata['geometry']['distance']
+        
+        # In this case, we define the binning_factor using the
+        # output_pixel_size
+        # Note, this will only work right when the output shape is
+        # the same in both dimensions
+        binning_factor = ( wavelength * det_distance / 
+                           ( output_shape[0] * pixel_pitch
+                             * (config['output_pixel_size'] * 1e-9)))
+        
+        metadata['geometry']['psize'] *= float(binning_factor)
+        if 'basis_vectors' in metadata['geometry']:
+            metadata['geometry']['basis_vectors'] = \
+                (np.array(metadata['geometry']['basis_vectors'])
+                 * float(binning_factor)).tolist()
+        
+        resampler = image_handling.InterpolatingResampler(
+            dummy_im, config['center'], output_shape,
+            binning_factor)
+    else:
+        # In this case, we ignore the output_pixel_size and just use the
+        # manually defined binning factor
+
+        metadata['geometry']['psize'] *= float(config['binning_factor'])
+        if 'basis_vectors' in metadata['geometry']:
+            metadata['geometry']['basis_vectors'] = \
+                (np.array(metadata['geometry']['basis_vectors'])
+                 * float(config['binning_factor'])).tolist()
+                 
+        resampler = image_handling.NonInterpolatingResampler(
+            dummy_im, config['center'], output_shape,
+            config['binning_factor'])
 
 
+
+    # Now we actually open the file and start to write to it
     with file_handling.create_cxi(output_filename, metadata) as cxi_file:
-        if default_mask is not None:
-            file_handling.add_mask(cxi_file, default_mask)
-            
-        darks = file_handling.read_mean_darks_from_stxm(
-            stxm_file, n_exp_per_point=n_exp_per_point, device=device)
 
-        # we pre-map the darks to tile format, which avoids needing to redo
-        # this computation every cycle
-        darks = tuple(image_handling.map_raw_to_tiles(dark) for dark in darks)
-        # This just creates the generator, the actual data isn't loaded until
-        # we iterate through it.
+        # The first thing we do is resample the default mask with the resampler
+        if default_mask is not None:
+            mask = default_mask.to(device=dummy_im.device)
+            print(mask.shape)
+            _, resampled_mask = resampler.resample(dummy_im, masks=mask)
+            file_handling.add_mask(cxi_file, resampled_mask)
+        
+        # This just gets an iterator, it will wait to actually load the
+        # images until it's iterated over
         chunked_exposures = file_handling.read_chunked_exposures_from_stxm(
-            stxm_file, chunk_size=chunk_size,
-            n_exp_per_point=n_exp_per_point, device=device)
+            stxm_file, chunk_size=config['chunk_size'],
+            n_exp_per_point=n_exp_per_point, device=config['device'])
         
         for idx, exps in enumerate(chunked_exposures):
-            if verbose:
-                print('Processing frames', idx*chunk_size,
-                      'to', (idx+1)*chunk_size-1, end='\r')
+            if not config['succinct']:
+                print('Processing frames', idx*config['chunk_size'],
+                      'to', (idx+1)*config['chunk_size']-1, end='\r')
 
-            cleaned_exps, masks = zip(*(image_handling.process_frame(exp, dark,
-                                                include_overscan=False)
-
-                                        for exp, dark in zip(exps, darks)))
-
+            # index is the index of the frame within the exposure, but idx
+            # refers to the index of the chunk we're dealing with
+            cleaned_exps, masks = zip(
+                *(frame_cleaner.process_frame(
+                    exp, index, include_overscan=False)
+                  for index, exp in enumerate(exps)))
+            
             # Because combine_exposures works with an arbitrary number of
             # exposures, we just always use it, and avoid needing a separate
             # case for the single and double exposure processing.
@@ -87,14 +145,23 @@ def process_file(stxm_file, output_filename, chunk_size=10, verbose=True,
                 image_handling.combine_exposures(
                     t.stack(cleaned_exps), t.stack(masks), exposure_times)
 
-            chunk_translations = np.array(translations[idx*chunk_size:(idx+1)*chunk_size])
-            chunk_translations[:,:2] = np.matmul(shear, chunk_translations[:,:2].transpose()).transpose()
+
+            # Now we resample the outputs to the requested format
+            resampled_exps, resampled_masks = \
+                resampler.resample(synthesized_exps,
+                                   masks=synthesized_masks)
+            
+            chunk_translations = np.array(
+                translations[idx*config['chunk_size']:
+                             (idx+1)*config['chunk_size']])
+            chunk_translations[:,:2] = np.matmul(
+                config['shear'], chunk_translations[:,:2].transpose()).transpose()
             
             file_handling.add_frames(cxi_file,
-                                     synthesized_exps[sl],
+                                     resampled_exps,
                                      chunk_translations,
-                                     masks=synthesized_masks[sl],
-                                     compression=compression)
+                                     masks=resampled_masks,
+                                     compression=config['compression'])
 
         print('Finished processing                                          ')
 
@@ -145,7 +212,8 @@ def main(argv=sys.argv):
         for filename in filenames:
             if filename not in expanded_stxm_filenames:
                 expanded_stxm_filenames.append(filename)
-        
+
+    
     for stxm_filename in expanded_stxm_filenames:
         output_filename = '.'.join(stxm_filename.split('.')[:-1])+'.cxi'
         if not args.succinct:
@@ -153,12 +221,8 @@ def main(argv=sys.argv):
             print('Output will be saved in', output_filename)
             
         with h5py.File(stxm_filename, 'r') as stxm_file:
-            process_file(stxm_file, output_filename,
-                         chunk_size=config['chunk_size'],
-                         verbose=not config['succinct'],
-                         compression=config['compression'],
-                         shear=config['shear'],
-                         default_mask=default_mask, device=config['device'])
+            process_file(stxm_file, output_filename, config,
+                         default_mask=default_mask)
 
 
 if __name__ == '__main__':

@@ -5,9 +5,10 @@
     "compression" : "lzf",
     "chunk_size" : 10,
     "device" : "cuda:0",
-    "resample" : true,
+    "interpolate" : false,
     "center" : [ 480, 480 ],
-    "output_pixel_count" : [960, 960],
+    "output_pixel_size" : 10,
+    "output_pixel_count" : 960,
     "binning_factor" : 1,
     "shear" : [[ 0.99961877, -0.06551266],
                [ 0.02651655,  0.99879594]]

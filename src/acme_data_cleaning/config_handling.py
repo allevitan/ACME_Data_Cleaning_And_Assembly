@@ -55,20 +55,21 @@ def add_processing_args(parser):
         '--device', type=str,
         help='The torch device to run on, by default "cuda:0".')
     parser.add_argument(
-        '--resample', action='store_true',
-        help="""If set, will resample the data to match the specified pixel size
-        and output shape, ignoring the binning-factor""")
+        '--interpolate', action='store_true',
+        help="""If set, will use interpolation to resample the data, matching
+        the specified output-pixel-size and output-pixel-count but ignoring the
+        binning-factor""")
     parser.add_argument(
-        '--no-resample', dest='resample', action='store_false',
-        help="""If set, will bin by an integer factor over a specified output
-        shape, ignoring the specified output-pixel-size.""")
-    parser.set_defaults(resample=None)
+        '--no-interpolate', dest='interpolate', action='store_false',
+        help="""If set, will bin by an integer binning-factor over a specified
+        output-pixel-count, ignoring the specified output-pixel-size.""")
+    parser.set_defaults(interpolate=None)
     parser.add_argument(
         '--center', type=float, nargs=2,
         help='The center of the output data on the detector')
     parser.add_argument(
         '--output-pixel-size', type=int,
-        help="""The design pixel size in real space.
+        help="""The designated pixel size (nm) in real space.
         Ignored if no-resample is set. Defaults to the value in the config
         file, or if not set, the value arising from the nearest detector
         edge""")
