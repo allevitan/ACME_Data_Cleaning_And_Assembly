@@ -10,31 +10,23 @@ import h5py
 import glob
 from acme_data_cleaning import image_handling, file_handling, config_handling
 
-# This is apparently the best-practice way to load config files from within
-# the package
-import importlib.resources
-import json
 
 
 def process_file(stxm_file, output_filename, config, default_mask=None):
-    #
-    # We first read the metadata
-    #
+    """Processes a single stxm file to .cxi
+    """
+    
+    # We first read the metadata and translations from the stxm file
+
     metadata = file_handling.read_metadata_from_stxm(stxm_file)
     translations = file_handling.read_translations_from_stxm(stxm_file)
 
-    # TODO: There appears to be tons of metadata in the .stxm file which is
-    # not in the metadata dictionary, such as start and end times, sample info,
-    # proposal, experimenters, energy.
-
-    # TODO: Right now, I'm not storing information about the probe guess. It
-    # would be nice to be able to provide a probe calibration that could then
-    # go into the .cxi file for ptychocam to use
+    # TODO: Properly handle the metadata in this dictionary, like start
+    # and end times, sample info, proposal, experimenters, energy.
     
-    #
-    # Next we get the key parameters from the metadata that we need to know
-    # for the scan.
-    #    
+    # Next we extract the key parameters from the metadata that we need to know
+    # to generate the .cxi file
+    # TODO: Set up a system that can flexibly do N exposures
     if metadata['double_exposure']:
         n_exp_per_point=2
         # Note: Old files have dwell1 meaning the second exposure and
@@ -46,77 +38,37 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
                   exposure_times)
     else:
         n_exp_per_point=1
-        # It honestly doesn't matter when it's not a double exposure
         exposure_times = np.array([metadata['dwell1']])
         if not config['succinct']:
             print('File uses single exposures')
     
-                
+    # This gets a list of mean dark patterns, one per exposure time
     darks = file_handling.read_mean_darks_from_stxm(
         stxm_file, n_exp_per_point=n_exp_per_point, device=config['device'])
     
-    # Instantiating the cleaner with the darks allows us to do the
-    # preprocessing on the darks once, not having to repeat it at each
-    # frame
+
+    # Now we instantiate a frame cleaner object and a resampling object.
+    # By instantiating them here, instead of at each frame, we can do some
+    # steps which are common to each frame ahead of time. E.g, transforming
+    # the dark frames to the right format, or storing the sampling positions
+    # for the interpolating resampler.
+
     frame_cleaner = image_handling.FastCCDFrameCleaner(darks)
     
-    # Instantiating a resampler at the start allows us to create the
-    # various slices and info needed for the resampling functions
-    # once and reuse that for the full scan
-    
-    # This just gets us the size of the input images
+    # This is used to help instantiate the resampling object
     dummy_im = frame_cleaner.process_frame(
         darks[0], 0, include_overscan=False)[0]
     
-    output_shape = (config['output_pixel_count'],)*2
-    
-    if config['interpolate']:
-        hc = 1.986446e-25 # in Joule-meters
-        energy = metadata['energy'] * 1.60218e-19 # convert to Joules
-        wavelength = hc / energy
-        pixel_pitch = metadata['geometry']['psize']
-        det_distance = metadata['geometry']['distance']
-        
-        # In this case, we define the binning_factor using the
-        # output_pixel_size
-        # Note, this will only work right when the output shape is
-        # the same in both dimensions
-        binning_factor = ( wavelength * det_distance / 
-                           ( output_shape[0] * pixel_pitch
-                             * (config['output_pixel_size'] * 1e-9)))
-        
-        metadata['geometry']['psize'] *= float(binning_factor)
-        if 'basis_vectors' in metadata['geometry']:
-            metadata['geometry']['basis_vectors'] = \
-                (np.array(metadata['geometry']['basis_vectors'])
-                 * float(binning_factor)).tolist()
-        
-        resampler = image_handling.InterpolatingResampler(
-            dummy_im, config['center'], output_shape,
-            binning_factor)
-    else:
-        # In this case, we ignore the output_pixel_size and just use the
-        # manually defined binning factor
+    resampler = image_handling.make_resampler(metadata, config, dummy_im)
 
-        metadata['geometry']['psize'] *= float(config['binning_factor'])
-        if 'basis_vectors' in metadata['geometry']:
-            metadata['geometry']['basis_vectors'] = \
-                (np.array(metadata['geometry']['basis_vectors'])
-                 * float(config['binning_factor'])).tolist()
-                 
-        resampler = image_handling.NonInterpolatingResampler(
-            dummy_im, config['center'], output_shape,
-            config['binning_factor'])
-
-
-
-    # Now we actually open the file and start to write to it
+    # Now we actually open the file, and we will write to it as we
+    # process the data.
     with file_handling.create_cxi(output_filename, metadata) as cxi_file:
 
-        # The first thing we do is resample the default mask with the resampler
+        # The first thing we do is resample the default mask with the resampler,
+        # to get a mask that will match the output data
         if default_mask is not None:
             mask = default_mask.to(device=dummy_im.device)
-            print(mask.shape)
             _, resampled_mask = resampler.resample(dummy_im, masks=mask)
             file_handling.add_mask(cxi_file, resampled_mask)
         
@@ -131,7 +83,7 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
                 print('Processing frames', idx*config['chunk_size'],
                       'to', (idx+1)*config['chunk_size']-1, end='\r')
 
-            # index is the index of the frame within the exposure, but idx
+            # index here is the index of the frame within the exposure, but idx
             # refers to the index of the chunk we're dealing with
             cleaned_exps, masks = zip(
                 *(frame_cleaner.process_frame(
@@ -145,65 +97,56 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
                 image_handling.combine_exposures(
                     t.stack(cleaned_exps), t.stack(masks), exposure_times)
 
-
+            
             # Now we resample the outputs to the requested format
             resampled_exps, resampled_masks = \
                 resampler.resample(synthesized_exps,
                                    masks=synthesized_masks)
-            
+
+            # Here we correct the translations for shear
             chunk_translations = np.array(
                 translations[idx*config['chunk_size']:
                              (idx+1)*config['chunk_size']])
             chunk_translations[:,:2] = np.matmul(
-                config['shear'], chunk_translations[:,:2].transpose()).transpose()
-            
+                config['shear'],
+                chunk_translations[:,:2].transpose()).transpose()
+
+            # This actually adds the frames to the cxi file
             file_handling.add_frames(cxi_file,
                                      resampled_exps,
                                      chunk_translations,
                                      masks=resampled_masks,
                                      compression=config['compression'])
-
+            
         print('Finished processing                                          ')
 
 
 def main(argv=sys.argv):
 
-    # This argument reading setup is a bit bizarre. The idea is that all the
+    # This argument reading setup is a bit unusual. The idea is that all the
     # arguments will have default values, which are stored in the configuration
     # file. If any are overridden by being explicitly set, then that will
     # override the values in the configuration file
     
+    # We parse the input command line args here
     parser = argparse.ArgumentParser()
-
     parser.add_argument('stxm_file', nargs='+', type=str, help='The file or files to process, allowing for unix globbing')
     config_handling.add_processing_args(parser)
-        
-    # We parse the input command line args
     args = parser.parse_args()
-    
+
+    # Now we get the configuration and blend it with the command line args
     config = config_handling.get_configuration()
-
     config = config_handling.blend_args_with_config(args, config)
-    
 
-    device = config['device']
-    
-    
-    if config['compression'].lower().strip() == 'none':
-        compression = None
-    else:
-        compression = config['compression'].lower().strip()
-    
-    
-    # Load the default mask from a file. This may not work for
-    # zipped packages, I don't know
-    with h5py.File(config['mask'], 'r') as f:
-        default_mask = t.as_tensor(np.array(f['mask']))
+    # We print a small summary of the key config parameters
+    if not config['succinct']:
+        config_handling.summarize_config(config)
 
-    # TODO: We need to make the data binning and resampling code work properly
-    # with the masks, and produce appropriate masks for the downsampled data!
-            
-    # Here we make globbing work nicely for files
+    # Here we actually load the requested mask
+    mask = config_handling.load_mask(config)
+
+    # Now what we do is produce a list of all the files to process, using the
+    # listed files (possibly defined via unix globs)
     expanded_stxm_filenames = []
     for stxm_filename in args.stxm_file:
         filenames = glob.glob(stxm_filename)
@@ -213,16 +156,16 @@ def main(argv=sys.argv):
             if filename not in expanded_stxm_filenames:
                 expanded_stxm_filenames.append(filename)
 
-    
+    # And finally, we process all the stxm files we found
     for stxm_filename in expanded_stxm_filenames:
         output_filename = '.'.join(stxm_filename.split('.')[:-1])+'.cxi'
-        if not args.succinct:
+        if not config['succinct']:
             print('Processing',stxm_filename)
             print('Output will be saved in', output_filename)
             
         with h5py.File(stxm_filename, 'r') as stxm_file:
             process_file(stxm_file, output_filename, config,
-                         default_mask=default_mask)
+                         default_mask=mask)
 
 
 if __name__ == '__main__':

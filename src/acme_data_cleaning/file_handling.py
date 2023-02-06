@@ -40,14 +40,6 @@ def read_metadata_from_stxm(stxm_file, add_detector_geometry=True):
         basis = np.array([[0,-psize,0],[-psize,0,0]])
         metadata['geometry']['basis_vectors'] = basis.tolist()
 
-        # TODO: avoid hardcoding the detector shape
-        # Probably, I should put this in the code that does the resampling
-        # of the detector, whenever I write that. For now, it just needs
-        # to happen somewhere
-        distance = float(metadata['geometry']['distance'])
-        corner = np.array([480*psize, 480*psize, distance])
-        metadata['geometry']['corner_position'] = corner.tolist()
-
     return metadata
 
 

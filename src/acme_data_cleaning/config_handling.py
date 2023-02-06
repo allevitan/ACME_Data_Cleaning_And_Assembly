@@ -1,11 +1,16 @@
 import json
 import importlib.resources
 import numpy as np
+import torch as t
+import h5py
+
 
 __all__ = [
     'get_configuration',
     'add_processing_args',
     'blend_args_with_config',
+    'summarize_config',
+    'load_mask'
 ]
 
 def get_configuration():
@@ -30,6 +35,12 @@ def get_configuration():
 
     if 'mask' not in config:
         config['mask'] = package_root.joinpath('default_mask.h5')
+
+    # This is how h5py expects the input, so I convert it upon load
+    if config['compression'].lower().strip() == 'none':
+        config['compression'] = None
+    else:
+        config['compression'] = config['compression'].lower().strip()
 
     return config
 
@@ -96,4 +107,44 @@ def blend_args_with_config(args, config):
         if arg_name not in config or arg is not None:
             config[arg_name] = arg
 
+    # We have to redo this in case compression was explicitly set
+    if config['compression'] is not None and \
+       config['compression'].lower().strip() == 'none':
+        config['compression'] = None
+    else:
+        config['compression'] = config['compression'].lower().strip()
+
     return config
+
+
+def summarize_config(config):
+
+    print('Compression to be used is:', config['compression'])
+    
+    if config['interpolate']:
+        print('Files will be processed using the interpolating resampler.')
+        print('Detector center is defined at [%0.2f, %0.2f]'
+              % tuple(config['center']))
+        print('Output pixel size in real space is %0.2f nm'
+              % config['output_pixel_size'])
+        print('Output pixel count is %d' % config['output_pixel_count'])
+        
+    else:
+        print('Files will be processed using the non-interpolating resampler.')
+        print('Detector center is defined at [%d, %d]'
+              % tuple(config['center']))
+        print('Binning factor is %d' % config['binning_factor'])
+        print('Output pixel count is %d' % config['output_pixel_count'])
+
+
+def load_mask(config):
+    """Load the specified mask from a file.
+
+    This falls back on the default mask, which is always included in the
+    config dictionary if not explicitly defined. This may not work for
+    zipped packages, I don't know.
+    """
+    with h5py.File(config['mask'], 'r') as f:
+        default_mask = t.as_tensor(np.array(f['mask']), device=config['device'])
+
+    return default_mask

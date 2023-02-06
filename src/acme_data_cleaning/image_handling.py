@@ -13,10 +13,14 @@ of images, so feel free to batch-process with abandon!
 # -*- coding: utf-8 -*-
 import numpy as np
 import torch as t
+import warnings
 
 __all__ = [
     'FastCCDFrameCleaner',
-    'combine_exposures'
+    'combine_exposures',
+    'InterpolatingResampler',
+    'NonInterpolatingResampler',
+    'make_resampler'
 ]
 
 #
@@ -41,8 +45,10 @@ def convolve2d(a, b):
     final_dimensions = list(a.shape[-2:])
     reshaped = a.reshape([int(np.prod(leading_dimensions)),1]+final_dimensions)
     expanded_kernel = b.reshape([1,1] + list(b.shape))
-    convolved = t.nn.functional.conv2d(reshaped, expanded_kernel,
-                                       padding='same')
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message="Using padding='same'")
+        convolved = t.nn.functional.conv2d(reshaped, expanded_kernel,
+                                           padding='same')
     output = convolved.reshape(leading_dimensions+final_dimensions)
     return output
 
@@ -691,10 +697,55 @@ class NonInterpolatingResampler():
         
         return output, output_masks
         
+
+def make_resampler(metadata, config, dummy_im):
+    """Makes the appropriate resampler
+
+    It chooses the resampler and sets the parameters based on the metadata,
+    config, and a dummy image
+    """
+
+    output_shape = (config['output_pixel_count'],)*2
+    
+    if config['interpolate']:
+        # We define an interpolating resampler
+        
+        hc = 1.986446e-25 # in Joule-meters
+        energy = metadata['energy'] * 1.60218e-19 # convert to Joules
+        wavelength = hc / energy
+        pixel_pitch = metadata['geometry']['psize']
+        det_distance = metadata['geometry']['distance']
+        
+        # In this case, we define the binning_factor using the
+        # output_pixel_size
+        binning_factor = ( wavelength * det_distance / 
+                           ( output_shape[0] * pixel_pitch
+                             * (config['output_pixel_size'] * 1e-9)))
+
+        # We have to remember to update the pixel size for the output
+        metadata['geometry']['psize'] *= float(binning_factor)
+        if 'basis_vectors' in metadata['geometry']:
+            metadata['geometry']['basis_vectors'] = \
+                (np.array(metadata['geometry']['basis_vectors'])
+                 * float(binning_factor)).tolist()
+        
+        return InterpolatingResampler(
+            dummy_im, config['center'], output_shape,
+            binning_factor)
+    else:
+        # We define a non-interpolating resampler
+        
+        # In this case, we ignore the output_pixel_size and just use the
+        # manually defined binning factor
+        metadata['geometry']['psize'] *= float(config['binning_factor'])
+        
+        if 'basis_vectors' in metadata['geometry']:
+            metadata['geometry']['basis_vectors'] = \
+                (np.array(metadata['geometry']['basis_vectors'])
+                 * float(config['binning_factor'])).tolist()
+                 
+        return NonInterpolatingResampler(
+            dummy_im, config['center'], output_shape,
+            config['binning_factor'])
         
 
-def recenter_and_bin(images, center=None, output_shape=None, binning_factor=1):
-    """Recenters and bins a diffraction pattern or set of patterns
-    """
-    pass
-    

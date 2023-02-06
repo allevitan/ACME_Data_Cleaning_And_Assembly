@@ -1,15 +1,12 @@
 import zmq
 import h5py
 from contextlib import contextmanager
-from acme_data_cleaning import image_handling, file_handling
+from acme_data_cleaning import image_handling, file_handling, config_handling
+import argparse
 import sys
 import torch as t
 import numpy as np
 
-# This is apparently the best-practice way to load config files from within
-# the package
-import importlib.resources
-import json
 
 # How should I structure this? I'll get 4 kinds of events, and each event
 # needs to:
@@ -33,7 +30,9 @@ def make_new_state():
         'index': 0,
         'current_exposures': None,
         'current_masks': None,
-        'position': None
+        'position': None,
+        'frame_cleaner': None,
+        'resampler': None
     }
 
 
@@ -41,38 +40,45 @@ def make_new_state():
 # to return an open .cxi file. As a context manager, we can make sure that
 # those files are always properly closed. 
 @contextmanager
-def process_start_event(cxi_file, state, event, pub, mask=None):
-    print('Processing start event')
+def process_start_event(state, event, pub, config):
+    """Processes a start event, getting the metadata and opening a cxi_file
+    """
+    
     pub.send_pyobj(event)
-    if state['metadata'] is not None:
-        # This means that we missed a stop event but still think we are
-        # taking data
-        if cxi_file is not None:
-            cxi_file.close()
-        state['metadata'] = None
-        state['darks'] = None
-        state['current_exposures'] = None
-        
-    state['metadata'] = event['data']
 
+    print('Processing start event')
+
+    # We load the mask, preloaded on the correct device
+    mask = config_handling.load_mask(config)
+
+    # TODO: need to figure out where this metadata actually is
+    state['metadata'] = event['data']
+    
     if state['metadata']['double_exposure']:
         # TODO: If this gets swapped, fix it.
         state['dwells'] = np.array([state['metadata']['dwell2'],
                                     state['metadata']['dwell1']])
-
+        print('Start event indicates double exposures with exposure times',
+              state['dwells'])
     else:
         state['dwells'] = np.array([state['metadata']['dwell1']])
+        print('Start event indicates single exposures.')
+    
         
+    # We need to add the basis to the metadata
     psize = float(state['metadata']['geometry']['psize'])
     basis = np.array([[0,-psize,0],[-psize,0,0]])
     state['metadata']['geometry']['basis_vectors'] = basis.tolist()
-            
+
+    # Now we instantiate the info we need to accumulate in the state
+    # dictionary. This is where we store information that we need to keep
+    # around between events.
     state['current_exposures'] = {dwell: [] for dwell in state['dwells']}
     state['current_masks'] = {dwell: [] for dwell in state['dwells']}
     state['darks'] = {dwell: None for dwell in state['dwells']}
     state['n_darks'] = {dwell: 0 for dwell in state['dwells']}
-
-    # First, I need to find the right filename to save the .cxi file in
+    
+    # Now I find the right filename to save the .cxi file in
     output_filename = make_output_filename(state)
     
     # Next, we assemble the metadata dictionary
@@ -81,15 +87,14 @@ def process_start_event(cxi_file, state, event, pub, mask=None):
     # Next, I need to create and leave open that .cxi file
     with file_handling.create_cxi(output_filename, metadata) as cxi_file:
         # We should add the mask at this point
-        if mask is not None:
-            file_handling.add_mask(cxi_file, mask)
+        file_handling.add_mask(cxi_file, mask)
 
         yield cxi_file
 
 
 def make_output_filename(state):
     # TODO: Make this work!
-    # What goes into the defaul filename
+    # What goes into the default filename
     # There is the date, scan number, region number, and energy number
     date = '220925' # probably best to get this info from the scan data,
     # if it exists, so there's no chance of it being saved under a different
@@ -169,11 +174,12 @@ def process_exp_event(cxi_file, state, event, pub, config):
 
         print('Never got a start event, not processing')
         return
+    
     print('Processing exp event',event['data']['index'])
     
     state['position'] = np.array([-event['data']['xPos'],
                                    -event['data']['yPos']])
-
+    
     # A correction for the shear in the probe positions
     state['position'] = np.matmul(config['shear'], state['position'])
 
@@ -196,6 +202,7 @@ def process_exp_event(cxi_file, state, event, pub, config):
 def trigger_ptycho(state, rec_trigger):
     output_filename = make_output_filename(state)
     print('TODO: trigger a ptychography reconstruction')
+    
 
 def process_stop_event(cxi_file, state, event, pub, rec_trigger):
     if state['metadata'] is None:
@@ -217,14 +224,15 @@ def process_emergency_stop(cxi_file, state, pub, rec_trigger):
     """
     print('Doing an emergency stop')
     finalize_frame(cxi_file, state, pub)
-    # Should we create a fake stop event to pass along? I think we shouldn't,
-    # but if we decide to, this would be some of the code
-    #pub.send_pyobj(event)
+
     
 
 
 def run_data_accumulation_loop(cxi_file, state, event,
                                sub, pub, rec_trigger, config):
+    """Accumulates darks and frame data into a cxi file, until it completes
+    """
+    
     while True:
         event = sub.recv_pyobj()
         
@@ -245,66 +253,16 @@ def run_data_accumulation_loop(cxi_file, state, event,
 
 def main(argv=sys.argv):
 
+    # I'm just using this so the script has a help printout
     parser = argparse.ArgumentParser(
         prog = 'process_live_data',
         description = 'Runs a program which listens for raw data being emitted by pystxmcontrol. It assembles and preprocesses this data, saving the results inot .cxi files and passing the cleaned data on for further analysis.')
-    
-    
-    parser.add_argument('--mask','-m', type=str, default='', help='A custom mask file to use, if the default is not appropriate')
-    parser.add_argument('--chunk_size','-c', type=int, default=10, help='The chunk size to use in the output .cxi files, default is 10.')
-    parser.add_argument('--compression', type=str, default='lzf', help='What hdf5 compression filter to use on the output CCD data. Default is lzf.')
-    parser.add_argument('--succinct', action='store_true', help='Turns off verbose output')
-    parser.add_argument('--cpu', action='store_true', help='Run everything on the cpu')
-    parser.add_argument('--center', type=int, nargs=2)
-    ## TODO: Make the radius configurable
-    parser.add_argument('--radius', type=int)
-    # TODO: Plan for the downsampling:
-    
-    
     args = parser.parse_args()
-    if args.cpu:
-        device = 'cpu'
-    else:
-        # TODO: offer more flexibility in the GPU choice
-        device='cuda:0'
-
-    if args.compression.lower().strip() == 'none':
-        args.compression = None
-    else:
-        args.compression = args.compression.lower().strip()
     
-    stxm_filenames = args.stxm_file
+    # TODO maybe add the ZMQ ports as args?
     
-    # Now we create the data slice
-    if args.center is None:
-        args.center = [480,480]
-    if args.radius is None:
-        sl = np.s_[:,:,:]
-    else:
-        sl = np.s_[:,args.center[0]-args.radius:args.center[0]+args.radius,
-                   args.center[1]-args.radius:args.center[1]+args.radius]
-
-    
-    package_root = importlib.resources.files('acme_data_cleaning')
-    # This loads the default configuration first. This file is managed by
-    # git and should not be edited by a user
-    config = json.loads(package_root.joinpath('defaults.json').read_text())\
-
-    # And now, if the user has installed an optional config file, we allow it
-    # to override what is in defaults.json
-    config_file_path = package_root.joinpath('config.json')
-
-    # not sure if this works with zipped packages
-    if config_file_path.exists():
-        config.update(json.loads(config_file_path.read_text()))
-
-    config['shear'] = np.array(config['shear'])
-
-    # TODO: include this mask in the saved .cxi file
-    with h5py.File(package_root.joinpath('default_mask.h5'), 'r') as f:
-        default_mask = t.as_tensor(np.array(f['mask']))
-        # Crop out the correct part of the mask
-        # default_mask = default_mask[sl[1:]]
+    # Now we get the config info to read the ZMQ ports
+    config = config_handling.get_configuration()
 
     context = zmq.Context()
     sub = context.socket(zmq.SUB)
@@ -315,12 +273,12 @@ def main(argv=sys.argv):
     rec_trigger = context.socket(zmq.PUB)
     rec_trigger.bind(config['trigger_reconstruction_port'])
 
-    state = make_new_state()
     start_event = None
     while True:
+                
         # This logic allows us to deal with cases where the 'stop' event
         # doesn't make it to the program. In that case, we need to keep the
-        # second 'start' event around after we read it to start the next file
+        # 'start' event around to start the next file
         if start_event is None:
             event = sub.recv_pyobj()
         else:
@@ -328,16 +286,26 @@ def main(argv=sys.argv):
             start_event = None
             
         if event['event'].lower().strip() == 'start':
-            with process_start_event(state, event, pub,
-                                     mask=default_mask) as cxi_file:
+            # We reload the config data following every start event.
+            # Not all of the updated config parameters will actually be
+            # used, but this makes it easy to update things like the
+            # detector center, etc. and have them propagate as soon as possible.
+            config = config_handling.get_configuration()
+            state = make_new_state()
+            
+            # Process start event returns a context manager for an open
+            # cxi file with the appropriate metadata
+            with process_start_event(state, event, pub, config=config) \
+                 as cxi_file:
+                # This loop will read in darks and exp data until it gets
+                # a stop or start event, at which point it will return.
                 start_event = run_data_accumulation_loop(
                     cxi_file, state, event, sub, pub, rec_trigger, config)
 
-            # we need to trigger the ptycho reconstruction after saving the
-            # file, to ensure that the file exists when the reconstruction
-            # begins
+            # we wait to trigger the ptycho reconstruction until after saving
+            # the file, to ensure that the file exists when the reconstruction
+            # begins.
             trigger_ptycho(state, rec_trigger)
-            state = make_new_state()
 
 
 
