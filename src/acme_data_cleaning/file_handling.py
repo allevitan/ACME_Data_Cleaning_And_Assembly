@@ -14,7 +14,7 @@ from functools import reduce
 # However, other data (metadata, translations, etc.) is small and barely
 # modified, this processing is all done on the cpu and purely in numpy.
 
-def read_metadata_from_stxm(stxm_file, add_detector_geometry=True):
+def read_metadata_from_stxm(stxm_file):
     """Extracts the metadata from a .stxm file.
 
     The result is a python dictionary with a standard format
@@ -23,16 +23,6 @@ def read_metadata_from_stxm(stxm_file, add_detector_geometry=True):
     until that information can be added to the .stxm files themselves.
     """
     metadata = json.loads(stxm_file["metadata/"].asstr()[()])
-
-    # This is a hack, but this data should really be stored in the .stxm files
-    # themselves. So, instead of adding a separate configuration file, I'm
-    # going to leave this hack in until I can convince David to add this to the
-    # .stxm files.
-    if add_detector_geometry:
-        if 'geometry' not in metadata:
-            metadata['geometry'] = {}
-        metadata['geometry']['psize'] = 30e-6
-        metadata['geometry']['distance'] = 0.121
 
     # We also add a bit of extra metadata, if it doesn't already exist:
     if 'geometry' in metadata and 'psize' in metadata['geometry']:
@@ -70,7 +60,12 @@ def read_exposures_from_stxm(stxm_file, n_exp_per_point=1, device='cpu'):
                   for offset in range(n_exp_per_point))
         yield tuple(t.as_tensor(frame, device=device) for frame in frames)
 
-        
+
+def get_n_frames_from_stxm(stxm_file, n_exp_per_point=1):
+    exp_frames = stxm_file["entry0/ccd0/exp"]
+    frame_indices = sorted([int(idx) for idx in list(exp_frames)])
+    return (max(frame_indices)+1) // n_exp_per_point
+                                     
 def read_chunked_exposures_from_stxm(stxm_file, chunk_size=10,
                                      n_exp_per_point=1, device='cpu'):
     """A generator function to iterate through the exp frames in a .stxm file

@@ -52,7 +52,7 @@ def process_start_event(state, event, pub, config):
     mask = config_handling.load_mask(config)
 
     # TODO: need to figure out where this metadata actually is
-    state['metadata'] = event['data']
+    state['metadata'] = event['data']['metadata']
     
     if state['metadata']['double_exposure']:
         # TODO: If this gets swapped, fix it.

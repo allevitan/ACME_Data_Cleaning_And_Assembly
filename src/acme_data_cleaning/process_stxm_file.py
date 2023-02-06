@@ -71,7 +71,11 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
             mask = default_mask.to(device=dummy_im.device)
             _, resampled_mask = resampler.resample(dummy_im, masks=mask)
             file_handling.add_mask(cxi_file, resampled_mask)
-        
+
+        # Read the number of frames
+        n_frames = file_handling.get_n_frames_from_stxm(
+            stxm_file, n_exp_per_point=n_exp_per_point)
+
         # This just gets an iterator, it will wait to actually load the
         # images until it's iterated over
         chunked_exposures = file_handling.read_chunked_exposures_from_stxm(
@@ -80,8 +84,9 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
         
         for idx, exps in enumerate(chunked_exposures):
             if not config['succinct']:
-                print('Processing frames', idx*config['chunk_size'],
-                      'to', (idx+1)*config['chunk_size']-1, end='\r')
+                print('Processing frames', idx*config['chunk_size']+1,
+                      'to', min(n_frames, (idx+1)*config['chunk_size']),
+                      'of', n_frames, end='\r')
 
             # index here is the index of the frame within the exposure, but idx
             # refers to the index of the chunk we're dealing with
