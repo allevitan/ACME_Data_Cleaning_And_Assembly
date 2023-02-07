@@ -17,7 +17,6 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
     """
     
     # We first read the metadata and translations from the stxm file
-
     metadata = file_handling.read_metadata_from_stxm(stxm_file)
     translations = file_handling.read_translations_from_stxm(stxm_file)
 

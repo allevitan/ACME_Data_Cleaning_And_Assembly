@@ -32,7 +32,8 @@ def make_new_state():
         'current_masks': None,
         'position': None,
         'frame_cleaner': None,
-        'resampler': None
+        'resampler': None,
+        'mask': None
     }
 
 
@@ -49,11 +50,11 @@ def process_start_event(state, event, pub, config):
     print('Processing start event')
 
     # We load the mask, preloaded on the correct device
-    mask = config_handling.load_mask(config)
+    state['mask'] = config_handling.load_mask(config)
 
     # TODO: need to figure out where this metadata actually is
-    state['metadata'] = event['data']['metadata']
-    
+    state['metadata'] = event['metadata']
+
     if state['metadata']['double_exposure']:
         # TODO: If this gets swapped, fix it.
         state['dwells'] = np.array([state['metadata']['dwell2'],
@@ -66,6 +67,11 @@ def process_start_event(state, event, pub, config):
     
         
     # We need to add the basis to the metadata
+    state['metadata']['geometry']['psize'] = \
+            state['metadata']['geometry']['psize'] * 1e-6
+    state['metadata']['geometry']['distance'] = \
+            state['metadata']['geometry']['distance'] * 1e-3
+
     psize = float(state['metadata']['geometry']['psize'])
     basis = np.array([[0,-psize,0],[-psize,0,0]])
     state['metadata']['geometry']['basis_vectors'] = basis.tolist()
@@ -80,41 +86,32 @@ def process_start_event(state, event, pub, config):
     
     # Now I find the right filename to save the .cxi file in
     output_filename = make_output_filename(state)
-    
-    # Next, we assemble the metadata dictionary
-    metadata = {}
+    print('Saving data to', output_filename)
     
     # Next, I need to create and leave open that .cxi file
-    with file_handling.create_cxi(output_filename, metadata) as cxi_file:
-        # We should add the mask at this point
-        file_handling.add_mask(cxi_file, mask)
-
+    with file_handling.create_cxi(output_filename, state['metadata']) \
+         as cxi_file:
         yield cxi_file
 
 
 def make_output_filename(state):
-    # TODO: Make this work!
-    # What goes into the default filename
-    # There is the date, scan number, region number, and energy number
-    date = '220925' # probably best to get this info from the scan data,
-    # if it exists, so there's no chance of it being saved under a different
-    # name from the .stxm file
-    scan_no = '%03d' '006'
-    region_no = str(0)
-    energy_no = str(0)
-    return ('NS_' + date + scan_no + '_ccdframes_'
-            + region_no + '_' + energy_no + '.cxi')
+    header = state['metadata']['header']
+    header = '.'.join(header.split('.')[:-1])
+
+    # TODO: actually find the region number and energy number
+    region_no = 0
+    energy_no = 0
+    return header + '_ccdframes_%d_%d.cxi' % (region_no, energy_no)
     
 
-def process_dark_event(cxi_file, state, event, pub):
-    if state['metadata'] is None:
-        print('Never got a start event, not processing')
-        return
+def process_dark_event(cxi_file, state, event, config):
     print('Processing dark event')
-    #'dwell' is where the dwell time is saved
+
+    # We add the (properly weighted) new dark image to the appropriate
+    # set of darks
     dwell = event['data']['dwell']
-    dark = image_handling.map_raw_to_tiles(
-        t.as_tensor(np.array(event['data']['ccd_frame'])))
+    dark = t.as_tensor(np.array(event['data']['ccd_frame'], dtype=np.float32),
+                       device=config['device'])
     if state['darks'][dwell] is None:
         state['darks'][dwell] = dark
     else:
@@ -124,7 +121,44 @@ def process_dark_event(cxi_file, state, event, pub):
     state['n_darks'][dwell] += 1
 
 
-def finalize_frame(cxi_file, state, event, pub):
+def process_exp_event(cxi_file, state, event, pub, config):
+    print('Processing exp event',event['data']['index'])
+
+    if state['frame_cleaner'] is None:
+        print('Creating the frame cleaner; all further darks will be disregarded')
+        state['frame_cleaner'] = \
+            image_handling.FastCCDFrameCleaner(
+                [state['darks'][dwell] for dwell in state['dwells']])
+
+    if event['data']['index'] != state['index']:
+        # we've moved on, so we need to finalize the frame
+        finalize_frame(cxi_file, state, pub, config)
+        state['index'] = event['data']['index']
+
+    state['position'] = np.array([-event['data']['xPos'],
+                                   -event['data']['yPos']]) * 1e-6
+    
+    # A correction for the shear in the probe positions
+    state['position'] = np.matmul(config['shear'], state['position'])
+
+    dwell = event['data']['dwell']
+    dwell_idx = np.where(state['dwells'] == dwell)[0][0]
+    
+    raw_frame = t.as_tensor(np.array(event['data']['ccd_frame'],
+                                     dtype=np.float32),
+                            device=config['device'])
+    frame, mask = state['frame_cleaner'].process_frame(raw_frame, dwell_idx)
+    
+
+    # We always need to do this
+    state['current_exposures'][dwell].append(frame)
+    state['current_masks'][dwell].append(mask)
+
+
+def finalize_frame(cxi_file, state, pub, config):
+
+    # we first combine the frames
+    
     all_dwells = []
     all_frames = []
     all_masks = []
@@ -136,67 +170,60 @@ def finalize_frame(cxi_file, state, event, pub):
 
 
     if len(all_frames) == 0:
-        return 
-    all_dwells = t.as_tensor(np.array(all_dwells))
-    all_frames = t.as_tensor(np.array(all_frames))
-    all_masks = t.as_tensor(np.array(all_masks))
-
-    combined_frame, combined_mask = image_handling.combine_exposures(
+        return
+    
+    all_dwells = np.array(all_dwells)
+    all_frames = t.stack(all_frames, dim=0)
+    all_masks = t.stack(all_masks, dim=0)
+    
+    synthesized_frame, synthesized_mask = image_handling.combine_exposures(
         all_frames, all_masks, all_dwells)
 
-    combined_frame = np.array(combined_frame)
+    # After combining the frames, we resample them.
+
+    if state['resampler'] is None:
+        dummy_im = synthesized_frame
+        state['resampler'] = image_handling.make_resampler(
+            state['metadata'], config, dummy_im)
+
+        # We should add the mask at this point
+        mask = state['mask'].to(device=dummy_im.device)
+        _, resampled_mask = state['resampler'].resample(dummy_im, masks=mask)
+        file_handling.add_mask(cxi_file, resampled_mask)
+
+        # And, one final correction, we need to update the pixel sizes on
+        file_handling.update_cxi_metadata(cxi_file, state['metadata'])
+
+
+    resampled_frame, resampled_mask = \
+        state['resampler'].resample(synthesized_frame,
+                                    masks=synthesized_mask)
+
+        
+    numpy_resampled_frame = resampled_frame.cpu().numpy()
 
     basis = np.array(state['metadata']['geometry']['basis_vectors']).transpose()
     output_event = {
         'event':'frame',
-        'data': combined_frame,
+        'data': numpy_resampled_frame,
         'position': state['position'],
         'basis': basis
     }
     
     pub.send_pyobj(output_event)
+
+    # Here we zero out the exposures and masks for the next frame
     state['current_exposures'] = {dwell: [] for dwell in state['dwells']}
     state['current_masks'] = {dwell: [] for dwell in state['dwells']}
 
+    output_position = t.zeros(3)
+    output_position[:2] = t.as_tensor(state['position'])
+    
     file_handling.add_frame(cxi_file,
-                            combined_frame,
-                            synthesized_exps[sl],
-                            chunk_translations,
-                            masks=synthesized_masks[sl],
-                            compression=compression)
-    
-    
-
-def process_exp_event(cxi_file, state, event, pub, config):
-    if state['metadata'] is None:
-        # This is just a backup check, the upstream logic *should* prevent
-        # this from getting triggered in the absence of a start event
-
-        print('Never got a start event, not processing')
-        return
-    
-    print('Processing exp event',event['data']['index'])
-    
-    state['position'] = np.array([-event['data']['xPos'],
-                                   -event['data']['yPos']])
-    
-    # A correction for the shear in the probe positions
-    state['position'] = np.matmul(config['shear'], state['position'])
-
-    dwell = event['data']['dwell']
-    dark = state['darks'][dwell]
-    # TODO: There seems to b
-    raw_frame = np.array(event['data']['ccd_frame'])
-    frame, mask = image_handling.process_frame(raw_frame, dark)
-    
-    if event['data']['index'] != state['index']:
-        # we've moved on, so we need to finalize the frame
-        finalize_frame(cxi_file, state, event, pub)
-        state['index'] = event['data']['index']
-
-    # We always need to do this
-    state['current_exposures'][dwell].append(frame)
-    state['current_masks'][dwell].append(mask)
+                            resampled_frame,
+                            output_position,
+                            mask=resampled_mask,
+                            compression=config['compression'])
 
 
 def trigger_ptycho(state, rec_trigger):
@@ -204,26 +231,25 @@ def trigger_ptycho(state, rec_trigger):
     print('TODO: trigger a ptychography reconstruction')
     
 
-def process_stop_event(cxi_file, state, event, pub, rec_trigger):
+def process_stop_event(cxi_file, state, event, pub, rec_trigger, config):
     if state['metadata'] is None:
         # This is just a backup check, the upstream logic *should* prevent
         # this from getting triggered in the absence of a start event
         print('Never got a start event, not processing')
         return
     
-    print('Processing stop event')
-    finalize_frame(cxi_file, state, event, pub)
-    trigger_ptycho(cxi_file, state, rec_trigger)
+    print('Processing stop event\n\n')
+    finalize_frame(cxi_file, state, pub, config)
     pub.send_pyobj(event)
 
 
-def process_emergency_stop(cxi_file, state, pub, rec_trigger):
+def process_emergency_stop(cxi_file, state, pub, rec_trigger, config):
     """This is triggered if no stop event happens, but we get a second
     start event. In this case, we just finish the scan without any of the
     info in the stop event.
     """
-    print('Doing an emergency stop')
-    finalize_frame(cxi_file, state, pub)
+    print('Doing an emergency stop\n\n')
+    finalize_frame(cxi_file, state, pub, config)
 
     
 
@@ -237,16 +263,16 @@ def run_data_accumulation_loop(cxi_file, state, event,
         event = sub.recv_pyobj()
         
         if event['event'].lower().strip() == 'start':
-            process_emergency_stop(cxi_file, state, pub, rec_trigger)
+            process_emergency_stop(cxi_file, state, pub, rec_trigger, config)
             return event # pass the event back so we can start a new loop
 
         if event['event'].lower().strip() == 'stop':
-            process_stop_event(cxi_file, state, event, pub, rec_trigger)
+            process_stop_event(cxi_file, state, event, pub, rec_trigger, config)
             return None
                     
         elif event['event'].lower().strip() == 'frame':
             if event['data']['ccd_mode'] == 'dark':
-                process_dark_event(cxi_file, state, event, pub)
+                process_dark_event(cxi_file, state, event, config)
             else:
                 process_exp_event(cxi_file, state, event, pub, config)
 
@@ -273,6 +299,10 @@ def main(argv=sys.argv):
     rec_trigger = context.socket(zmq.PUB)
     rec_trigger.bind(config['trigger_reconstruction_port'])
 
+    print('Listening for raw frames on',config['subscription_port'])
+    print('Broadcasting processed frames on',config['broadcast_port'])    
+    print('Triggering ptycho on', config['trigger_reconstruction_port'])
+    
     start_event = None
     while True:
                 
@@ -284,13 +314,14 @@ def main(argv=sys.argv):
         else:
             event = start_event
             start_event = None
-            
+
         if event['event'].lower().strip() == 'start':
             # We reload the config data following every start event.
             # Not all of the updated config parameters will actually be
             # used, but this makes it easy to update things like the
             # detector center, etc. and have them propagate as soon as possible.
             config = config_handling.get_configuration()
+            config_handling.summarize_config(config)
             state = make_new_state()
             
             # Process start event returns a context manager for an open

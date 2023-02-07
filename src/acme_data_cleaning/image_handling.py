@@ -358,9 +358,11 @@ def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
     the case of ties, the first exposure with the minimum time will be used.
     """
     exposure_times = t.as_tensor(exposure_times,
-                                 dtype=frames.dtype, device=frames.device)
+                                 dtype=frames[0].dtype,
+                                 device=frames[0].device)
     # This sets up the masks that we need if we plan to use all the exposures
     num_trailing_dimensions = len(frames[0].shape)
+    
     inverse_masks = ~masks
     exposure_weighted_masks = (inverse_masks.to(dtype=t.float32)
                                * exposure_times.reshape(
@@ -467,9 +469,9 @@ class InterpolatingResampler():
         # First we get the locations of the sampling points,
         # in the coordinate system described in the docstring
         i = (t.arange(self.output_shape[0], device=sample_input.device)
-             - self.output_shape[0] // 2) * binning_factor + center[0]
+             - float(self.output_shape[0]) // 2) * binning_factor + center[0]
         j = (t.arange(self.output_shape[0], device=sample_input.device)
-              - self.output_shape[0] // 2) * binning_factor + center[1]
+              - float(self.output_shape[0]) // 2) * binning_factor + center[1]
         I, J = t.meshgrid((i,j), indexing='ij')
 
         # And we convert to the coordinate system expected by grid_sample
@@ -604,8 +606,8 @@ class NonInterpolatingResampler():
         # Just needed to make ptyorch happy
         self.output_shape = tuple(t.as_tensor(val) for val in output_shape)
 
-        n_pix = tuple(n for n in self.output_shape)
-        bin_fact = self.binning_factor
+        n_pix = tuple(int(n) for n in self.output_shape)
+        bin_fact = int(self.binning_factor)
         
         limits = tuple((c - n // 2 * bin_fact - (bin_fact-1)//2,
                         c - (n // 2 - n ) * bin_fact - (bin_fact-1)//2)

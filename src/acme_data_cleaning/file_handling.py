@@ -26,6 +26,11 @@ def read_metadata_from_stxm(stxm_file):
 
     # We also add a bit of extra metadata, if it doesn't already exist:
     if 'geometry' in metadata and 'psize' in metadata['geometry']:
+        metadata['geometry']['psize'] = \
+            metadata['geometry']['psize'] * 1e-6
+        metadata['geometry']['distance'] = \
+            metadata['geometry']['distance'] * 1e-3
+        
         psize = float(metadata['geometry']['psize'])
         basis = np.array([[0,-psize,0],[-psize,0,0]])
         metadata['geometry']['basis_vectors'] = basis.tolist()
@@ -173,6 +178,54 @@ metadata_format = {
     "phase_curvature": [groups["source"] + "phase_curvature"],
 }
 
+
+def update_cxi_metadata(cxi_file, metadata):
+    """Updates the metadata in a .cxi file from a metadata dictionary
+    """
+    # This ensures all the required groups are made (e.g. entry_1/data_1)
+    for group, location in groups.items():
+        if location not in cxi_file:
+            cxi_file.create_group(location)
+            
+    # Here we create all the required groups for the metadata
+    # Note that unlike Pablo's code, I do not attempt to store the
+    # entries in the metadata dictionary which don't have a specified
+    # location in the .cxi file. Instead, I save out the original metadata
+    # dictionary in json format in it's own dataset, the same way it is
+    # stored in the .stxm file. This keeps things tidy while ensuring that
+    # no metadata is lost.
+    if 'metadata' in cxi_file:
+        del cxi_file['metadata']
+    cxi_file.create_dataset("metadata", data=json.dumps(metadata))
+    for key, value in metadata.items():
+        # I'm including this because David wants to store the detector
+        # geometry information in it's own dictionary within the main
+        # metadata dictionary, so I need to traverse at least one level
+        # down. Sorry, future maintainers, unless you're David, in which
+        # case I'm not sorry and you did this to yourself.
+        if type(value) == dict:
+            subkeys, subvalues = zip(*value.items())
+            subkeys = [key + '/' + subkey for subkey in subkeys]
+        else:
+            subkeys = [key]
+            subvalues = [value]
+            
+        for subkey, subvalue in zip(subkeys, subvalues):            
+            if subkey in metadata_format:
+                for group in metadata_format[subkey]:
+                    if group in cxi_file:
+                        del cxi_file[group]
+                    cxi_file.create_dataset(group, data = subvalue)
+                    
+    # This is another hack, but unfortunately the energy is stored in
+    # eV in the .stxm file, but needs to be in J for a .cxi file, so we
+    # copy it over here
+    if 'energy' in metadata:
+        energy = metadata['energy'] * 1.60218e-19 # convert to Joules
+        for group in metadata_format['energy']:
+            cxi_file[group][()] = energy
+
+
 @contextmanager
 def create_cxi(filename, metadata):
     """Creates a .cxi file with the provided metadata, not including any data
@@ -186,43 +239,9 @@ def create_cxi(filename, metadata):
     with h5py.File(filename, 'w') as cxi_file:
         cxi_file.create_dataset("cxi_version",data=140)
 
-        # This ensures all the required groups are made (e.g. entry_1/data_1)
-        for group, location in groups.items():
-            cxi_file.create_group(location)
-
-        # Here we create all the required groups for the metadata
-        # Note that unlike Pablo's code, I do not attempt to store the
-        # entries in the metadata dictionary which don't have a specified
-        # location in the .cxi file. Instead, I save out the original metadata
-        # dictionary in json format in it's own dataset, the same way it is
-        # stored in the .stxm file. This keeps things tidy while ensuring that
-        # no metadata is lost.
-        cxi_file.create_dataset("metadata", data=json.dumps(metadata))
-        for key, value in metadata.items():
-            # I'm including this because David wants to store the detector
-            # geometry information in it's own dictionary within the main
-            # metadata dictionary, so I need to traverse at least one level
-            # down. Sorry, future maintainers, unless you're David, in which
-            # case I'm not sorry and you did this to yourself.
-            if type(value) == dict:
-                subkeys, subvalues = zip(*value.items())
-                subkeys = [key + '/' + subkey for subkey in subkeys]
-            else:
-                subkeys = [key]
-                subvalues = [value]
-                
-            for subkey, subvalue in zip(subkeys, subvalues):            
-                if subkey in metadata_format:
-                    for group in metadata_format[subkey]:
-                        cxi_file.create_dataset(group, data = subvalue)
-
-        # This is another hack, but unfortunately the energy is stored in
-        # eV in the .stxm file, but needs to be in J for a .cxi file, so we
-        # copy it over here
-        if 'energy' in metadata:
-            energy = metadata['energy'] * 1.60218e-19 # convert to Joules
-            for group in metadata_format['energy']:
-                cxi_file[group][()] = energy
+        # populate the metadata
+        update_cxi_metadata(cxi_file, metadata)
+        
         yield cxi_file
 
 
@@ -241,7 +260,7 @@ def add_frame(cxi_file, frame, translation, mask=None, intensity=None,
     detector mask stored in the file. This can be useful if certain shots have
     regions of bad data which should be added to the full detector mask.
     """
-    masks = np.expand_dims(mask,0) if mask is not None else None
+    masks = t.unsqueeze(mask,0) if mask is not None else None
     intensities = np.array([intensity]) if intensity is not None else None
     
     return add_frames(cxi_file,
