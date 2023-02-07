@@ -99,9 +99,9 @@ def make_output_filename(state):
     header = '.'.join(header.split('.')[:-1])
 
     # TODO: actually find the region number and energy number
-    region_no = 0
-    energy_no = 0
-    return header + '_ccdframes_%d_%d.cxi' % (region_no, energy_no)
+    region_no = state['metadata']['scanRegion']
+    energy_no = state['metadata']['energyIndex']
+    return header + '_ccdframes_%d_%d.cxi' % (energy_no, region_no)
     
 
 def process_dark_event(cxi_file, state, event, config):
