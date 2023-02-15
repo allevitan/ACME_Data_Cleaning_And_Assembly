@@ -133,7 +133,6 @@ groups = {
     "geometry": "/entry_1/sample_1/geometry_1/",
     "source":  "/entry_1/instrument_1/source_1/", 
     "detector": "/entry_1/instrument_1/detector_1/",
-    "process": "/entry_1/image_1/process_1/"
 }
 
 # This dictionary maps from entries that are present in the metadata json

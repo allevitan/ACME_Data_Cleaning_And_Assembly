@@ -147,7 +147,13 @@ def process_exp_event(cxi_file, state, event, pub, config):
     raw_frame = t.as_tensor(np.array(event['data']['ccd_frame'],
                                      dtype=np.float32),
                             device=config['device'])
-    frame, mask = state['frame_cleaner'].process_frame(raw_frame, dwell_idx)
+    frame, mask = state['frame_cleaner'].process_frame(
+        raw_frame, dwell_idx, include_overscan=False,
+        med_width=config['background_median_width'],
+        max_correction=config['max_overscan_correction'],
+        min_correction=config['min_overscan_correction'],
+        background_offset=config['background_offset'],
+        cut_zeros=config['cut_zeros'])
     
 
     # We always need to do this

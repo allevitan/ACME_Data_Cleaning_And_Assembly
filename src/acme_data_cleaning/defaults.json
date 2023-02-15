@@ -10,6 +10,11 @@
     "output_pixel_size" : 10,
     "output_pixel_count" : 960,
     "binning_factor" : 1,
+    "cut_zeros": true,
+    "background_offset": 0.55,
+    "background_median_width": 10,
+    "max_overscan_correction": 50,
+    "min_overscan_correction": -1000,
     "shear" : [[ 0.99961877, -0.06551266],
                [ 0.02651655,  0.99879594]]
 }

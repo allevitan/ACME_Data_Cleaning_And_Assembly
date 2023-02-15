@@ -91,7 +91,12 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
             # refers to the index of the chunk we're dealing with
             cleaned_exps, masks = zip(
                 *(frame_cleaner.process_frame(
-                    exp, index, include_overscan=False)
+                    exp, index, include_overscan=False,
+                    med_width=config['background_median_width'],
+                    max_correction=config['max_overscan_correction'],
+                    min_correction=config['min_overscan_correction'],
+                    background_offset=config['background_offset'],
+                    cut_zeros=config['cut_zeros'])
                   for index, exp in enumerate(exps)))
             
             # Because combine_exposures works with an arbitrary number of

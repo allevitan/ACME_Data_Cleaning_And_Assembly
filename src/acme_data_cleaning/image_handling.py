@@ -200,8 +200,7 @@ class FastCCDFrameCleaner(FrameCleaner):
 
 
 
-    def make_saturation_mask(self, exp_tiles, radius=1,
-                             include_wing_shadows=False):
+    def make_saturation_mask(self, exp_tiles, radius=1):
         """Generates a map of saturated pixels in an exposure.
         
         The actual mask returned is the set of all saturated pixels, binary
@@ -214,11 +213,6 @@ class FastCCDFrameCleaner(FrameCleaner):
         Radius defines the size of a convolution element to dilate the mask
         with, which is useful because the saturation tends to affect
         neighboring pixels.
-
-        Finally, if include_wing_shadows is set to True, the mask will also
-        include the regions of the detector which have fake "shadows" due
-        to the saturation in the 0th order. These occur two tiles outward
-        from the saturated regions.
         """
 
         mask = t.zeros(exp_tiles.shape, device=exp_tiles.device)
@@ -233,20 +227,13 @@ class FastCCDFrameCleaner(FrameCleaner):
         kernel = t.ones([radius*2+1,radius*2+1], device=exp_tiles.device)
         mask = convolve2d(mask, kernel) >= 1
         
-        if include_wing_shadows:
-            # This also masks off the regions that have the  wing shadows,
-            # which show up two tiles outward from saturated regions
-            mask[:46] = mask[:46] + mask[2:48]
-            mask[50:96] = mask[50:96] + mask[48:96-2]
-            mask[96:96+46] = mask[96:96+46:] + mask[96+2:96+48]
-            mask[96+50:] = mask[96+50:] + mask[96+48:-2]
-            mask = mask >= 1
-
         return mask
 
 
     def apply_overscan_background_subtraction(
-            self, tiles, med_width=10, max_correction=50):
+            self, tiles, med_width=10,
+            max_correction=50, min_correction=None,
+            background_offset=0.55, cut_zeros=True):
         """Applies a frame-to-frame background correction based on the overscan.
         
         Thus function uses the first and last column of each tile to estimate a
@@ -286,7 +273,9 @@ class FastCCDFrameCleaner(FrameCleaner):
         # to become unreasonably large. However, we don't apply a min, because
         # saturation can also cause large negative changes to the background
         # which are real, and do show up in the overscan.
-        background_estimate = t.clamp(background_estimate, max=max_correction)
+        background_estimate = t.clamp(background_estimate,
+                                      max=max_correction,
+                                      min=min_correction)
 
         # The method above slightly underestimates the background, because we
         # estimate it using the min of the two overscan columns. Because these
@@ -298,13 +287,19 @@ class FastCCDFrameCleaner(FrameCleaner):
         # by comparing the estimated background with the mean pixel value in a
         # region which is not illuminated. If the detector changes, then this
         # value would change as well.
-        return t.clamp(tiles -  background_estimate[...,None] - 0.55, min=-5)
+        subtracted  = tiles -  background_estimate[...,None] - background_offset
+        if cut_zeros:
+            return t.clamp(subtracted, min=0)
+        else:
+            return subtracted
 
 
     def process_frame(self, exp, idx, mask=None,
                       med_width=10,
                       max_correction=50,
-                      include_wing_shadows=None,
+                      min_correction=None,
+                      background_offset=0.55,
+                      cut_zeros=True,
                       include_overscan=False):
         """Processes a single frame from raw data to final result
 
@@ -321,7 +316,9 @@ class FastCCDFrameCleaner(FrameCleaner):
         subtracted = tiles - self.darks[idx]
 
         cleaned = self.apply_overscan_background_subtraction(
-            subtracted, med_width=med_width,  max_correction=max_correction)
+            subtracted, med_width=med_width,
+            max_correction=max_correction, min_correction=min_correction,
+            background_offset=background_offset, cut_zeros=cut_zeros)
 
         frames = self.map_tiles_to_frame(
             cleaned, include_overscan=include_overscan)
