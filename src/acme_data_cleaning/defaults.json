@@ -1,7 +1,8 @@
 {
     "broadcast_port" : "tcp://*:37013",
     "subscription_port" : "tcp://localhost:37012",
-    "trigger_reconstruction_port" : "tcp://*:37016",
+    "use_prefect" : false,
+    "reconstruction_deployment": "Reconstruct From .cxi/reconstruct-from-cxi",
     "compression" : "lzf",
     "chunk_size" : 10,
     "device" : "cuda:0",

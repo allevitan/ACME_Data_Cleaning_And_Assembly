@@ -232,12 +232,24 @@ def finalize_frame(cxi_file, state, pub, config):
                             compression=config['compression'])
 
 
-def trigger_ptycho(state, rec_trigger):
-    output_filename = make_output_filename(state)
-    print('TODO: trigger a ptychography reconstruction')
-    
+def trigger_ptycho(state, config):
+    if not config['use_prefect']:
+        print('Not triggering ptychography, because I not using prefect')
+    else:
+        print('Triggering ptychography via prefect API')
+        output_filename = make_output_filename(state)
+        output_filename = '/'.join(output_filename.split('/')[5:])
+        parameters = {
+            'path' : output_filename,
+        }
+        try:
+            run_deployment(name='Reconstruct from .cxi/reconstruct-from-cxi',
+                           parameters=parameters,
+                           timeout=0)
+        except:
+            print('Failed to contact prefect')
 
-def process_stop_event(cxi_file, state, event, pub, rec_trigger, config):
+def process_stop_event(cxi_file, state, event, pub, config):
     if state['metadata'] is None:
         # This is just a backup check, the upstream logic *should* prevent
         # this from getting triggered in the absence of a start event
@@ -249,7 +261,7 @@ def process_stop_event(cxi_file, state, event, pub, rec_trigger, config):
     pub.send_pyobj(event)
 
 
-def process_emergency_stop(cxi_file, state, pub, rec_trigger, config):
+def process_emergency_stop(cxi_file, state, pub, config):
     """This is triggered if no stop event happens, but we get a second
     start event. In this case, we just finish the scan without any of the
     info in the stop event.
@@ -261,7 +273,7 @@ def process_emergency_stop(cxi_file, state, pub, rec_trigger, config):
 
 
 def run_data_accumulation_loop(cxi_file, state, event,
-                               sub, pub, rec_trigger, config):
+                               sub, pub, config):
     """Accumulates darks and frame data into a cxi file, until it completes
     """
     
@@ -269,11 +281,11 @@ def run_data_accumulation_loop(cxi_file, state, event,
         event = sub.recv_pyobj()
         
         if event['event'].lower().strip() == 'start':
-            process_emergency_stop(cxi_file, state, pub, rec_trigger, config)
+            process_emergency_stop(cxi_file, state, pub, config)
             return event # pass the event back so we can start a new loop
 
         if event['event'].lower().strip() == 'stop':
-            process_stop_event(cxi_file, state, event, pub, rec_trigger, config)
+            process_stop_event(cxi_file, state, event, pub, config)
             return None
                     
         elif event['event'].lower().strip() == 'frame':
@@ -302,12 +314,9 @@ def main(argv=sys.argv):
     sub.setsockopt(zmq.SUBSCRIBE, b'')
     pub = context.socket(zmq.PUB)
     pub.bind(config['broadcast_port'])
-    rec_trigger = context.socket(zmq.PUB)
-    rec_trigger.bind(config['trigger_reconstruction_port'])
 
     print('Listening for raw frames on',config['subscription_port'])
     print('Broadcasting processed frames on',config['broadcast_port'])    
-    print('Triggering ptycho on', config['trigger_reconstruction_port'])
     
     start_event = None
     while True:
@@ -337,12 +346,12 @@ def main(argv=sys.argv):
                 # This loop will read in darks and exp data until it gets
                 # a stop or start event, at which point it will return.
                 start_event = run_data_accumulation_loop(
-                    cxi_file, state, event, sub, pub, rec_trigger, config)
+                    cxi_file, state, event, sub, pub, config)
 
             # we wait to trigger the ptycho reconstruction until after saving
             # the file, to ensure that the file exists when the reconstruction
             # begins.
-            trigger_ptycho(state, rec_trigger)
+            trigger_ptycho(state, config)
 
 
 
