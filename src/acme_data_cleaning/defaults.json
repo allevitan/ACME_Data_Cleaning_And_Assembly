@@ -3,6 +3,7 @@
     "subscription_port" : "tcp://localhost:37012",
     "use_prefect" : false,
     "reconstruction_deployment": "Reconstruct From .cxi/reconstruct-from-cxi",
+    "succinct" : false,
     "compression" : "lzf",
     "chunk_size" : 10,
     "device" : "cuda:0",
