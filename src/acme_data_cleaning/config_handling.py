@@ -1,5 +1,6 @@
 import json
 import importlib.resources
+import importlib_resources
 import numpy as np
 import torch as t
 import h5py
@@ -18,7 +19,8 @@ def get_configuration():
     """
     
     # Then we load the configuration options
-    package_root = importlib.resources.files('acme_data_cleaning')
+    # package_root = importlib.resources.files('acme_data_cleaning')
+    package_root = importlib_resources.files('acme_data_cleaning')
     # This loads the default configuration first. This file is managed by
     # git and should not be edited by a user
     config = json.loads(package_root.joinpath('defaults.json').read_text())\
