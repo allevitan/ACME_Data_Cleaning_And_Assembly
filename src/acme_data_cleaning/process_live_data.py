@@ -1,3 +1,4 @@
+import os
 import zmq
 import h5py
 from contextlib import contextmanager
@@ -6,6 +7,8 @@ import argparse
 import sys
 import torch as t
 import numpy as np
+from cosmicstreams.PreprocessorStream import PreprocessorStream
+from scipy import constants
 
 
 # How should I structure this? I'll get 4 kinds of events, and each event
@@ -19,6 +22,12 @@ import numpy as np
 # 2) All the darks which have been collected on this scan
 # 3) All the metadata for the scan
 
+
+def get_dataset_name(metadata):
+    filepath = metadata['header']
+    filename = os.path.basename(filepath)
+    identifier = filename[:12]
+    return identifier
 
 
 def make_new_state():
@@ -44,8 +53,7 @@ def make_new_state():
 def process_start_event(state, event, pub, config):
     """Processes a start event, getting the metadata and opening a cxi_file
     """
-    
-    pub.send_pyobj(event)
+    # pub.send_pyobj(event)
 
     print('Processing start event')
 
@@ -57,23 +65,18 @@ def process_start_event(state, event, pub, config):
 
     if state['metadata']['double_exposure']:
         # TODO: If this gets swapped, fix it.
-        state['dwells'] = np.array([state['metadata']['dwell2'],
-                                    state['metadata']['dwell1']])
-        print('Start event indicates double exposures with exposure times',
-              state['dwells'])
+        state['dwells'] = np.array([state['metadata']['dwell2'], state['metadata']['dwell1']])
+        print('Start event indicates double exposures with exposure times', state['dwells'])
     else:
         state['dwells'] = np.array([state['metadata']['dwell1']])
         print('Start event indicates single exposures.')
-    
-        
+
     # We need to add the basis to the metadata
-    state['metadata']['geometry']['psize'] = \
-            state['metadata']['geometry']['psize'] * 1e-6
-    state['metadata']['geometry']['distance'] = \
-            state['metadata']['geometry']['distance'] * 1e-3
+    state['metadata']['geometry']['psize'] = state['metadata']['geometry']['psize'] * 1e-6
+    state['metadata']['geometry']['distance'] = state['metadata']['geometry']['distance'] * 1e-3
 
     psize = float(state['metadata']['geometry']['psize'])
-    basis = np.array([[0,-psize,0],[-psize,0,0]])
+    basis = np.array([[0, -psize, 0], [-psize, 0, 0]])
     state['metadata']['geometry']['basis_vectors'] = basis.tolist()
 
     # Now we instantiate the info we need to accumulate in the state
@@ -83,14 +86,63 @@ def process_start_event(state, event, pub, config):
     state['current_masks'] = {dwell: [] for dwell in state['dwells']}
     state['darks'] = {dwell: None for dwell in state['dwells']}
     state['n_darks'] = {dwell: 0 for dwell in state['dwells']}
-    
+    state['pix_translations'] = True
+
+    # state['metadata']['translations'] = (-np.array(state['metadata']['translations']) * 1e-6).tolist()
+    state['metadata']['translations'] = (np.array(state['metadata']['translations']) * 1e-6).tolist()
+    metadata_cxi = state['metadata']
+    metadata_cxi['output_frame_width'] = config['output_pixel_count']
+    metadata_cxi['x_pixel_size'] = psize
+    metadata_cxi['y_pixel_size'] = psize
+    metadata_cxi['detector_distance'] = state['metadata']['geometry']['distance']
+    metadata_cxi['energy'] = state['metadata']['energy'] * constants.e
+    metadata_cxi['pix_translations'] = True
+
+    wavelength = constants.h * constants.c / metadata_cxi['energy']
+    alpha = np.arctan(psize * metadata_cxi['output_frame_width'] / (2 * metadata_cxi['detector_distance']))
+    px_size = wavelength / (2 * np.sin(alpha))
+    state['px_size_real_space'] = px_size
+
+    # Translations are originally given as (y, x).
+    metadata_cxi['translations'] = np.array(metadata_cxi['translations'])
+    translations_tmp = metadata_cxi['translations'].copy()
+
+    # Translations are changed to (x, y) to apply the shear.
+    metadata_cxi['translations'][:, 0] = translations_tmp[:, 1]
+    metadata_cxi['translations'][:, 1] = translations_tmp[:, 0]
+    metadata_cxi['translations'] = np.dot(config['shear'], metadata_cxi['translations'].T).T
+
+    # translations_tmp = metadata_cxi['translations'].copy()
+    # metadata_cxi['translations'][:, 0] = translations_tmp[:, 1]
+    # metadata_cxi['translations'][:, 1] = translations_tmp[:, 0]
+    metadata_cxi['translations'] = np.array(metadata_cxi['translations']) / px_size
+    # translations_tmp = metadata_cxi['translations'].copy()
+    # metadata_cxi['translations'][:, 0] = translations_tmp[:, 1]
+    # metadata_cxi['translations'][:, 1] = translations_tmp[:, 0]
+    # metadata_cxi['translations'] = np.dot(config['shear'], metadata_cxi['translations'].T).T
+    # translations_tmp = metadata_cxi['translations'].copy()
+    # metadata_cxi['translations'][:, 0] = translations_tmp[:, 1]
+    # metadata_cxi['translations'][:, 1] = translations_tmp[:, 0]
+    metadata_cxi['translations'] = np.ceil(metadata_cxi['translations'])
+    metadata_cxi['translations'][:, 0] -= metadata_cxi['translations'][:, 0].min()
+    metadata_cxi['translations'][:, 1] -= metadata_cxi['translations'][:, 1].min()
+
+    metadata_cxi['translations'] = metadata_cxi['translations'].tolist()
+
+    # metadata_cxi = file_handling.transform_metadata_acme_to_cxi(state['metadata'])
+    identifier = get_dataset_name(state['metadata'])
+    metadata_cxi['identifier'] = identifier
+
+    pub.send_start(metadata_cxi)
+
     # Now I find the right filename to save the .cxi file in
     output_filename = make_output_filename(state)
     print('Saving data to', output_filename)
     
     # Next, I need to create and leave open that .cxi file
-    with file_handling.create_cxi(output_filename, state['metadata']) \
-         as cxi_file:
+    # Energy has to be in eV
+    state['metadata']['energy'] = state['metadata']['energy'] / constants.e
+    with file_handling.create_cxi(output_filename, state['metadata']) as cxi_file:
         yield cxi_file
 
 
@@ -130,16 +182,18 @@ def process_exp_event(cxi_file, state, event, pub, config):
             image_handling.FastCCDFrameCleaner(
                 [state['darks'][dwell] for dwell in state['dwells']])
 
+    # state['position'] = np.array([-event['data']['xPos'],
+    #                                -event['data']['yPos']]) * 1e-6
+    state['position'] = np.array([event['data']['xPos'],
+                                  event['data']['yPos']]) * 1e-6 / state['px_size_real_space']
+    
+    # A correction for the shear in the probe positions
+    state['position'] = np.matmul(config['shear'], state['position'])
+
     if event['data']['index'] != state['index']:
         # we've moved on, so we need to finalize the frame
         finalize_frame(cxi_file, state, pub, config)
         state['index'] = event['data']['index']
-
-    state['position'] = np.array([-event['data']['xPos'],
-                                   -event['data']['yPos']]) * 1e-6
-    
-    # A correction for the shear in the probe positions
-    state['position'] = np.matmul(config['shear'], state['position'])
 
     dwell = event['data']['dwell']
     dwell_idx = np.where(state['dwells'] == dwell)[0][0]
@@ -154,7 +208,6 @@ def process_exp_event(cxi_file, state, event, pub, config):
         min_correction=config['min_overscan_correction'],
         background_offset=config['background_offset'],
         cut_zeros=config['cut_zeros'])
-    
 
     # We always need to do this
     state['current_exposures'][dwell].append(frame)
@@ -215,8 +268,21 @@ def finalize_frame(cxi_file, state, pub, config):
         'position': state['position'],
         'basis': basis
     }
-    
-    pub.send_pyobj(output_event)
+
+    # identifier, data, index, posy, posx, metadata
+    pos_x, pos_y = state['position']
+    filepath = state['metadata']['header']
+    filename = os.path.basename(filepath)
+    identifier = filename[:12]
+    index = state['index']
+    pub.send_frame(
+        identifier,
+        numpy_resampled_frame,
+        index,
+        pos_y,
+        pos_x
+    )
+    # pub.send_pyobj(output_event)
 
     # Here we zero out the exposures and masks for the next frame
     state['current_exposures'] = {dwell: [] for dwell in state['dwells']}
@@ -258,7 +324,8 @@ def process_stop_event(cxi_file, state, event, pub, config):
     
     print('Processing stop event\n\n')
     finalize_frame(cxi_file, state, pub, config)
-    pub.send_pyobj(event)
+    pub.send_stop({})
+    # pub.send_pyobj(event)
 
 
 def process_emergency_stop(cxi_file, state, pub, config):
@@ -312,8 +379,9 @@ def main(argv=sys.argv):
     sub = context.socket(zmq.SUB)
     sub.connect(config['subscription_port'])
     sub.setsockopt(zmq.SUBSCRIBE, b'')
-    pub = context.socket(zmq.PUB)
-    pub.bind(config['broadcast_port'])
+    # pub = context.socket(zmq.PUB)
+    # pub.bind(config['broadcast_port'])
+    pub = PreprocessorStream()
 
     print('Listening for raw frames on',config['subscription_port'])
     print('Broadcasting processed frames on',config['broadcast_port'])    
@@ -345,8 +413,7 @@ def main(argv=sys.argv):
                  as cxi_file:
                 # This loop will read in darks and exp data until it gets
                 # a stop or start event, at which point it will return.
-                start_event = run_data_accumulation_loop(
-                    cxi_file, state, event, sub, pub, config)
+                start_event = run_data_accumulation_loop(cxi_file, state, event, sub, pub, config)
 
             # we wait to trigger the ptycho reconstruction until after saving
             # the file, to ensure that the file exists when the reconstruction
