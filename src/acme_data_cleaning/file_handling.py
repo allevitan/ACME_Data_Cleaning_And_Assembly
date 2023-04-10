@@ -14,6 +14,32 @@ from functools import reduce
 # However, other data (metadata, translations, etc.) is small and barely
 # modified, this processing is all done on the cpu and purely in numpy.
 
+
+def transform_metadata_acme_to_cxi(metadata_acme):
+    metadata_cxi = {}
+    for key, value in metadata_acme.items():
+        # I'm including this because David wants to store the detector
+        # geometry information in it's own dictionary within the main
+        # metadata dictionary, so I need to traverse at least one level
+        # down. Sorry, future maintainers, unless you're David, in which
+        # case I'm not sorry and you did this to yourself.
+        if type(value) == dict:
+            subkeys, subvalues = zip(*value.items())
+            subkeys = [key + '/' + subkey for subkey in subkeys]
+        else:
+            subkeys = [key]
+            subvalues = [value]
+
+        for subkey, subvalue in zip(subkeys, subvalues):
+            if subkey in metadata_format:
+                for group in metadata_format[subkey]:
+                    if group in metadata_cxi:
+                        del metadata_cxi[group]
+                    metadata_cxi[group] = subvalue
+
+        return metadata_cxi
+
+
 def read_metadata_from_stxm(stxm_file):
     """Extracts the metadata from a .stxm file.
 
@@ -175,6 +201,7 @@ metadata_format = {
     "near_field": [groups["detector"] + "near_field"],
     "pinhole_width": [groups["source"] + "pinhole_width"],
     "phase_curvature": [groups["source"] + "phase_curvature"],
+    'pix_translations': [groups['geometry'] + 'pix_translations'],
 }
 
 
