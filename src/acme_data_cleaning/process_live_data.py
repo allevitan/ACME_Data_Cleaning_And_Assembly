@@ -151,8 +151,15 @@ def make_output_filename(state):
     header = '.'.join(header.split('.')[:-1])
 
     # TODO: actually find the region number and energy number
-    region_no = state['metadata']['scanRegion']
-    energy_no = state['metadata']['energyIndex']
+    if 'scanRegion' in state['metadata']:
+        region_no = state['metadata']['scanRegion']
+    else:
+        region_no = 0
+    if 'energyIndex' in state['metadata']:
+        energy_no = state['metadata']['energyIndex']
+    else:
+        energy_no = 0
+
     return header + '_ccdframes_%d_%d.cxi' % (energy_no, region_no)
     
 
