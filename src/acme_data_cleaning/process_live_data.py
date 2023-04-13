@@ -379,6 +379,10 @@ def run_data_accumulation_loop(
                         state['metadata_cxi']
                     )
 
+                    # fpath = r"/homes/silvio/data/test/test_probe_mask/NS_230412297_ccdframes_0_0_offline_1withoutmask_2withmask.cxi"
+                    # with h5py.File(fpath, 'r') as f:
+                    #     illu = f['/entry_1/image_1/process_1/final_illumination'][()]
+
                     state['metadata_cxi']['illumination_real'] = illu.real.tolist()
                     state['metadata_cxi']['illumination_imag'] = illu.imag.tolist()
                     state['metadata_cxi']['illumination_mask'] = illu_mask.tolist()
