@@ -88,9 +88,7 @@ def process_start_event(state, event, pub, config):
     state['darks'] = {dwell: None for dwell in state['dwells']}
     state['n_darks'] = {dwell: 0 for dwell in state['dwells']}
     state['pix_translations'] = True
-    # state['metadata']['pix_translations'] = True
 
-    # state['metadata']['translations'] = (-np.array(state['metadata']['translations']) * 1e-6).tolist()
     state['metadata']['translations'] = (np.array(state['metadata']['translations']) * 1e-6).tolist()
     state['metadata'] = state['metadata']
     # state['metadata'] = copy.deepcopy(state['metadata'])
@@ -127,7 +125,6 @@ def process_start_event(state, event, pub, config):
 
     metadata_cxi = copy.deepcopy(state['metadata'])
     state['metadata_cxi'] = metadata_cxi
-    # pub.send_start(metadata_cxi)
 
     # Now I find the right filename to save the .cxi file in
     output_filename = make_output_filename(state)
@@ -369,6 +366,11 @@ def run_data_accumulation_loop(
                 else:
                     continue
 
+                """
+                Everything below here will init the illumination and illumination mask, writes both into the cxi file,
+                then sends the metadata (including the illumination) via zmq and then sends the frames that have been 
+                received so far. It is really no good practice at all but since it works it is left as it is for now.
+                """
                 n_frames_nominal = len(state['metadata_cxi']['translations'])
                 n_frames_to_init_illu = int(n_frames_nominal * config['dp_fraction_for_illumination_init'])
                 if len(frames_for_illu_init) == n_frames_to_init_illu:
@@ -386,6 +388,7 @@ def run_data_accumulation_loop(
                     state['metadata_cxi']['illumination_real'] = illu.real.tolist()
                     state['metadata_cxi']['illumination_imag'] = illu.imag.tolist()
                     state['metadata_cxi']['illumination_mask'] = illu_mask.tolist()
+                    state['metadata_cxi']['dp_fraction_for_illumination_init'] = config['dp_fraction_for_illumination_init']
 
                     pub.send_start(state['metadata_cxi'])
 
