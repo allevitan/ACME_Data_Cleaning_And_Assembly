@@ -49,6 +49,7 @@ def read_translations_from_stxm(stxm_file):
                      dtype=np.float32) * 1e-6
     y_pos = np.array(stxm_file['entry0/instrument/sample_y/data'],
                      dtype=np.float32) * 1e-6
+
     return np.stack([x_pos, y_pos, np.zeros_like(x_pos)], axis=-1)
 
 

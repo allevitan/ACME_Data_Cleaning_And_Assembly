@@ -74,7 +74,7 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
         # Read the number of frames
         n_frames = file_handling.get_n_frames_from_stxm(
             stxm_file, n_exp_per_point=n_exp_per_point)
-
+        
         # This just gets an iterator, it will wait to actually load the
         # images until it's iterated over
         chunked_exposures = file_handling.read_chunked_exposures_from_stxm(
@@ -115,7 +115,7 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
             # Here we correct the translations for shear
             chunk_translations = np.array(
                 translations[idx*config['chunk_size']:
-                             (idx+1)*config['chunk_size']])
+                             idx*config['chunk_size']+resampled_exps.shape[0]])
             chunk_translations[:,:2] = np.matmul(
                 config['shear'],
                 chunk_translations[:,:2].transpose()).transpose()
