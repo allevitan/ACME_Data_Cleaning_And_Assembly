@@ -91,13 +91,11 @@ def process_start_event(state, event, pub, config):
 
     state['metadata']['translations'] = (np.array(state['metadata']['translations']) * 1e-6).tolist()
     state['metadata'] = state['metadata']
-    # state['metadata'] = copy.deepcopy(state['metadata'])
     state['metadata']['output_frame_width'] = config['output_pixel_count']
     state['metadata']['x_pixel_size'] = psize
     state['metadata']['y_pixel_size'] = psize
     state['metadata']['detector_distance'] = state['metadata']['geometry']['distance']
     state['metadata']['energy'] = state['metadata']['energy'] * constants.e
-    state['metadata']['pix_translations'] = True
 
     wavelength = constants.h * constants.c / state['metadata']['energy']
     alpha = np.arctan(psize * state['metadata']['output_frame_width'] / (2 * state['metadata']['detector_distance']))
@@ -106,17 +104,13 @@ def process_start_event(state, event, pub, config):
 
     # Translations are originally given as (y, x).
     state['metadata']['translations'] = np.array(state['metadata']['translations'])
-    translations_tmp = state['metadata']['translations'].copy()
 
     # Translations are changed to (x, y) to apply the shear.
+    translations_tmp = state['metadata']['translations'].copy()
     state['metadata']['translations'][:, 0] = translations_tmp[:, 1]
     state['metadata']['translations'][:, 1] = translations_tmp[:, 0]
-
     state['metadata']['translations'] = np.dot(config['shear'], state['metadata']['translations'].T).T
-    state['metadata']['translations'] = np.array(state['metadata']['translations']) / px_size
-    state['metadata']['translations'] = np.ceil(state['metadata']['translations'])
-    state['metadata']['translations'][:, 0] -= state['metadata']['translations'][:, 0].min()
-    state['metadata']['translations'][:, 1] -= state['metadata']['translations'][:, 1].min()
+
     state['metadata']['translations'] = state['metadata']['translations'].tolist()
 
     identifier = get_dataset_name(state['metadata'])
@@ -179,8 +173,9 @@ def process_exp_event(cxi_file, state, event, pub, config):
             image_handling.FastCCDFrameCleaner(
                 [state['darks'][dwell] for dwell in state['dwells']])
 
-    # state['position'] = np.array([-event['data']['xPos'], -event['data']['yPos']]) * 1e-6
-    state['position'] = np.array([event['data']['xPos'], event['data']['yPos']]) * 1e-6 / state['px_size_real_space']
+    # Change the position from um to m.
+    # state['position'] = np.array([event['data']['xPos'], event['data']['yPos']]) * 1e-6 / state['px_size_real_space']
+    state['position'] = np.array([event['data']['xPos'], event['data']['yPos']]) * 1e-6  # / state['px_size_real_space']
 
     # A correction for the shear in the probe positions
     state['position'] = np.matmul(config['shear'], state['position'])
@@ -189,7 +184,6 @@ def process_exp_event(cxi_file, state, event, pub, config):
     if event['data']['index'] != state['index']:
         # we've moved on, so we need to finalize the frame
         finalize_frame(cxi_file, state, pub, config)
-        # frame_numpy = finalize_frame(cxi_file, state, pub, config)
         state['index'] = event['data']['index']
 
     dwell = event['data']['dwell']
