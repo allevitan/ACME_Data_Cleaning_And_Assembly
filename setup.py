@@ -17,7 +17,7 @@ setuptools.setup(
         "numpy>=1.0",
         "scipy>=1.0",
         "matplotlib>=2.0", # 2.0 has better colormaps which are used by default
-        "PyQt5",
+        "h5py",
         "pyzmq",
         "torch>=1.9.0",
     ],
@@ -29,8 +29,9 @@ setuptools.setup(
             'simulate_zmq_from_stxm_file=acme_data_cleaning.simulate_zmq_from_stxm_file:main',
         ]
     },
+    package_data={"acme_data_cleaning": ["*.json", "*.h5"]},
     package_dir={"": "src"},
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages(where="src"),
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
