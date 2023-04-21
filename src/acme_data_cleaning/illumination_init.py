@@ -2,11 +2,11 @@ import numpy as np
 from scipy import constants
 
 
-def create_illumination(dps):
+def create_illumination(dps, norm='backward'):
     dataAve = dps.mean(0)
     pMask = np.fft.fftshift((dataAve > 0.01 * dataAve.max()))
     probe = np.sqrt(np.fft.fftshift(dataAve)) * pMask
-    probe = np.fft.ifftshift(np.fft.ifftn(probe))
+    probe = np.fft.ifftshift(np.fft.ifftn(probe, norm=norm))
     return probe, pMask
 
 
@@ -55,7 +55,7 @@ def init_illumination(dps, metadata):
     energy_joule = metadata['energy']
     energy_ev = energy_joule / constants.e
 
-    probe, probe_mask = create_illumination(dps)
+    probe, probe_mask = create_illumination(dps, norm='ortho')
 
     # if energy_ev != 700:
     distance = metadata['detector_distance']

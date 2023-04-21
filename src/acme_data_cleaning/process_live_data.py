@@ -45,7 +45,9 @@ def make_new_state():
         'frame_cleaner': None,
         'resampler': None,
         'mask': None,
-        'start_sending_frames': False
+        'start_sending_frames': False,
+        'frames': [],
+        'illu_initialization_done': False,
     }
 
 
@@ -189,7 +191,8 @@ def process_exp_event(cxi_file, state, event, pub, config):
     frame_numpy = None
     if event['data']['index'] != state['index']:
         # we've moved on, so we need to finalize the frame
-        frame_numpy = finalize_frame(cxi_file, state, pub, config)
+        finalize_frame(cxi_file, state, pub, config)
+        # frame_numpy = finalize_frame(cxi_file, state, pub, config)
         state['index'] = event['data']['index']
 
     dwell = event['data']['dwell']
@@ -289,7 +292,12 @@ def finalize_frame(cxi_file, state, pub, config):
                             mask=resampled_mask,
                             compression=config['compression'])
 
-    return numpy_resampled_frame
+    state['frames'].append(numpy_resampled_frame)
+
+    n_frames_nominal = len(state['metadata_cxi']['translations'])
+    n_frames_to_init_illu = int(n_frames_nominal * config['dp_fraction_for_illumination_init'])
+    if len(state['frames']) == n_frames_to_init_illu:
+        send_start_and_existing_frames(cxi_file, pub, state, config)
 
 
 def trigger_ptycho(state, config):
@@ -319,7 +327,17 @@ def process_stop_event(cxi_file, state, event, pub, config):
 
     print('Processing stop event\n\n')
     finalize_frame(cxi_file, state, pub, config)
-    pub.send_stop({})
+
+
+def process_abort_event(cxi_file, state, event, pub, config):
+    if state['metadata'] is None:
+        # This is just a backup check, the upstream logic *should* prevent
+        # this from getting triggered in the absence of a start event
+        print('Never got a start event, not processing')
+        return
+
+    print('Processing abort event\n\n')
+    finalize_frame(cxi_file, state, pub, config)
 
 
 def process_emergency_stop(cxi_file, state, pub, config):
@@ -342,81 +360,85 @@ def run_data_accumulation_loop(
     """Accumulates darks and frame data into a cxi file, until it completes
     """
 
-    frames_for_illu_init = []
     while True:
         event = sub.recv_pyobj()
 
         if event['event'].lower().strip() == 'start':
-            frames_for_illu_init.clear()
             process_emergency_stop(cxi_file, state, pub, config)
             return event  # pass the event back so we can start a new loop
 
         if event['event'].lower().strip() == 'stop':
-            process_stop_event(cxi_file, state, event, pub, config)
-            return None
+            # process_stop_event(cxi_file, state, event, pub, config)
+            return 'stop'
+
+        if event['event'].lower().strip() == 'abort':
+            # process_abort_event(cxi_file, state, event, pub, config)
+            return 'abort'
 
         elif event['event'].lower().strip() == 'frame':
             if event['data']['ccd_mode'] == 'dark':
                 process_dark_event(cxi_file, state, event, config)
             else:
-                frame = process_exp_event(cxi_file, state, event, pub, config)
+                process_exp_event(cxi_file, state, event, pub, config)
 
-                if frame is not None:
-                    frames_for_illu_init.append(frame)
-                else:
-                    continue
 
-                """
-                Everything below here will init the illumination and illumination mask, writes both into the cxi file,
-                then sends the metadata (including the illumination) via zmq and then sends the frames that have been 
-                received so far. It is really no good practice at all but since it works it is left as it is for now.
-                """
-                n_frames_nominal = len(state['metadata_cxi']['translations'])
-                n_frames_to_init_illu = int(n_frames_nominal * config['dp_fraction_for_illumination_init'])
-                if len(frames_for_illu_init) == n_frames_to_init_illu:
-                    state['start_sending_frames'] = True
+def send_start_and_existing_frames(cxi_file, pub, state, config):
+    """
+    Everything below here will init the illumination and illumination mask, writes both into the cxi file,
+    then sends the metadata (including the illumination) via zmq and then sends the frames that have been
+    received so far. It is really no good practice at all but since it works it is left as it is for now.
+    """
 
-                    illu, illu_mask = illumination_init.init_illumination(
-                        np.array(frames_for_illu_init),
-                        state['metadata_cxi']
-                    )
+    state['start_sending_frames'] = True
 
-                    # fpath = r"/homes/silvio/data/test/test_probe_mask/NS_230412297_ccdframes_0_0_offline_1withoutmask_2withmask.cxi"
-                    # with h5py.File(fpath, 'r') as f:
-                    #     illu = f['/entry_1/image_1/process_1/final_illumination'][()]
+    if state['illu_initialization_done']:
+        return
 
-                    state['metadata_cxi']['illumination_real'] = illu.real.tolist()
-                    state['metadata_cxi']['illumination_imag'] = illu.imag.tolist()
-                    state['metadata_cxi']['illumination_mask'] = illu_mask.tolist()
-                    state['metadata_cxi']['dp_fraction_for_illumination_init'] = config['dp_fraction_for_illumination_init']
+    illu, illu_mask = illumination_init.init_illumination(
+        np.array(state['frames']),
+        state['metadata_cxi']
+    )
+    print("Initialized illumination using {} of {} frames".format(len(state['frames']), len(state['metadata_cxi']['translations'])))
 
-                    pub.send_start(state['metadata_cxi'])
+    # fpath = r"/homes/silvio/data/test/test_probe_mask/NS_230412297_ccdframes_0_0_offline_1withoutmask_2withmask.cxi"
+    # with h5py.File(fpath, 'r') as f:
+    #     illu = f['/entry_1/image_1/process_1/final_illumination'][()]
 
-                    time.sleep(1.0)
+    state['metadata_cxi']['illumination_real'] = illu.real.tolist()
+    state['metadata_cxi']['illumination_imag'] = illu.imag.tolist()
+    state['metadata_cxi']['illumination_mask'] = illu_mask.tolist()
+    state['metadata_cxi']['dp_fraction_for_illumination_init'] = config['dp_fraction_for_illumination_init']
 
-                    # TODO: The index of the diffraction pattern is specified here as the index in the array.
-                    # TODO: This is a simplification, as it assumes that the diffraction patterns are received in order,
-                    # TODO: which is not necessarily true. However, left for now and can be fixed if the reconstruction
-                    # TODO: looks funny.
-                    for frame_idx, frame in enumerate(frames_for_illu_init):
-                        pos_x, pos_y = state['metadata_cxi']['translations'][frame_idx]
-                        filepath = state['metadata']['header']
-                        filename = os.path.basename(filepath)
-                        identifier = filename[:12]
-                        index = frame_idx
-                        pub.send_frame(
-                            identifier,
-                            frame,
-                            index,
-                            pos_y,
-                            pos_x
-                        )
+    pub.send_start(state['metadata_cxi'])
 
-                        time.sleep(0.05)
+    time.sleep(1.0)
 
-                    # TODO: write illumination and illumination mask into cxi file here.
-                    cxi_file.create_dataset('entry_1/instrument_1/source_1/illumination', data=illu)
-                    cxi_file.create_dataset('entry_1/instrument_1/source_1/probe_mask', data=illu_mask)
+    # TODO: The index of the diffraction pattern is specified here as the index in the array.
+    # TODO: This is a simplification, as it assumes that the diffraction patterns are received in order,
+    # TODO: which is not necessarily true. However, left for now and can be fixed if the reconstruction
+    # TODO: looks funny.
+    for frame_idx, frame in enumerate(state['frames']):
+        pos_x, pos_y = state['metadata_cxi']['translations'][frame_idx]
+        filepath = state['metadata']['header']
+        filename = os.path.basename(filepath)
+        identifier = filename[:12]
+        index = frame_idx
+        pub.send_frame(
+            identifier,
+            frame,
+            index,
+            pos_y,
+            pos_x
+        )
+
+        time.sleep(0.05)
+
+    # TODO: write illumination and illumination mask into cxi file here.
+    cxi_file.create_dataset('entry_1/instrument_1/source_1/illumination', data=illu)
+    cxi_file.create_dataset('entry_1/instrument_1/source_1/probe_mask', data=illu_mask)
+    print("Wrote illumination and illumination mask into cxi file.")
+
+    state['illu_initialization_done'] = True
 
 
 def main(argv=sys.argv):
@@ -466,7 +488,16 @@ def main(argv=sys.argv):
             with process_start_event(state, event, pub, config=config) as cxi_file:
                 # This loop will read in darks and exp data until it gets
                 # a stop or start event, at which point it will return.
-                start_event = run_data_accumulation_loop(cxi_file, state, event, sub, pub, config)
+                return_code = run_data_accumulation_loop(cxi_file, state, event, sub, pub, config)
+
+            if return_code == 'stop':
+                start_event = None
+                pub.send_stop({})
+            elif return_code == 'abort':
+                pub.send_abort({})
+                start_event = None
+            else:
+                start_event = return_code
 
             # we wait to trigger the ptycho reconstruction until after saving
             # the file, to ensure that the file exists when the reconstruction
