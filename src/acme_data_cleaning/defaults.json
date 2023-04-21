@@ -18,5 +18,6 @@
     "max_overscan_correction": 50,
     "min_overscan_correction": -1000,
     "shear" : [[ 0.99961877, -0.06551266],
-               [ 0.02651655,  0.99879594]]
+               [ 0.02651655,  0.99879594]],
+    "dp_fraction_for_illumination_init": 1.0
 }

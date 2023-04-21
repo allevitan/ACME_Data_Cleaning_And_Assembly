@@ -63,11 +63,9 @@ def process_start_event(state, event, pub, config):
     # We load the mask, preloaded on the correct device
     state['mask'] = config_handling.load_mask(config)
 
-    # TODO: need to figure out where this metadata actually is
     state['metadata'] = event['metadata']
 
     if state['metadata']['double_exposure']:
-        # TODO: If this gets swapped, fix it.
         state['dwells'] = np.array([state['metadata']['dwell2'], state['metadata']['dwell1']])
         print('Start event indicates double exposures with exposure times', state['dwells'])
     else:
@@ -113,13 +111,12 @@ def process_start_event(state, event, pub, config):
     # Translations are changed to (x, y) to apply the shear.
     state['metadata']['translations'][:, 0] = translations_tmp[:, 1]
     state['metadata']['translations'][:, 1] = translations_tmp[:, 0]
-    state['metadata']['translations'] = np.dot(config['shear'], state['metadata']['translations'].T).T
 
+    state['metadata']['translations'] = np.dot(config['shear'], state['metadata']['translations'].T).T
     state['metadata']['translations'] = np.array(state['metadata']['translations']) / px_size
     state['metadata']['translations'] = np.ceil(state['metadata']['translations'])
     state['metadata']['translations'][:, 0] -= state['metadata']['translations'][:, 0].min()
     state['metadata']['translations'][:, 1] -= state['metadata']['translations'][:, 1].min()
-
     state['metadata']['translations'] = state['metadata']['translations'].tolist()
 
     identifier = get_dataset_name(state['metadata'])
