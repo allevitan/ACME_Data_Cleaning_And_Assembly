@@ -51,6 +51,18 @@ def make_new_state():
     }
 
 
+def calculate_interpolated_det_px_size(distance, npx_det, wavelength, px_size_real_space):
+    det_px_size = 2 * distance / npx_det
+    det_px_size *= np.tan(np.arcsin(wavelength / (2 * px_size_real_space)))
+    return det_px_size
+
+
+def calculate_px_size_real_space(px_size_det, npx_det, distance, wavelength):
+    alpha = np.arctan(px_size_det * npx_det / (2 * distance))
+    px_size = wavelength / (2 * np.sin(alpha))
+    return px_size
+
+
 # I wrote this as a context manager because the natural pattern is for it
 # to return an open .cxi file. As a context manager, we can make sure that
 # those files are always properly closed. 
@@ -73,6 +85,7 @@ def process_start_event(state, event, pub, config):
         print('Start event indicates single exposures.')
 
     # We need to add the basis to the metadata
+    # psize is given in um and change to m here.
     state['metadata']['geometry']['psize'] = state['metadata']['geometry']['psize'] * 1e-6
     state['metadata']['geometry']['distance'] = state['metadata']['geometry']['distance'] * 1e-3
 
@@ -87,20 +100,42 @@ def process_start_event(state, event, pub, config):
     state['current_masks'] = {dwell: [] for dwell in state['dwells']}
     state['darks'] = {dwell: None for dwell in state['dwells']}
     state['n_darks'] = {dwell: 0 for dwell in state['dwells']}
-    state['pix_translations'] = True
 
     state['metadata']['translations'] = (np.array(state['metadata']['translations']) * 1e-6).tolist()
-    state['metadata'] = state['metadata']
     state['metadata']['output_frame_width'] = config['output_pixel_count']
-    state['metadata']['x_pixel_size'] = psize
-    state['metadata']['y_pixel_size'] = psize
+
     state['metadata']['detector_distance'] = state['metadata']['geometry']['distance']
     state['metadata']['energy'] = state['metadata']['energy'] * constants.e
 
     wavelength = constants.h * constants.c / state['metadata']['energy']
-    alpha = np.arctan(psize * state['metadata']['output_frame_width'] / (2 * state['metadata']['detector_distance']))
-    px_size = wavelength / (2 * np.sin(alpha))
-    state['px_size_real_space'] = px_size
+    if config['interpolate']:
+        state['px_size_real_space'] = config['output_pixel_size'] * 1e-9
+        distance = state['metadata']['detector_distance']
+        npx = config['output_pixel_count']
+
+        psize_interpolated = calculate_interpolated_det_px_size(
+            distance,
+            npx,
+            wavelength,
+            config['output_pixel_size'] * 1e-9
+        )
+
+        state['metadata']['x_pixel_size'] = psize_interpolated
+        state['metadata']['y_pixel_size'] = psize_interpolated
+
+    else:
+        # alpha = np.arctan(psize * state['metadata']['output_frame_width'] / (2 * state['metadata']['detector_distance']))
+        # px_size = wavelength / (2 * np.sin(alpha))
+        # state['px_size_real_space'] = px_size
+        state['px_size_real_space'] = calculate_px_size_real_space(
+            psize,
+            state['metadata']['output_frame_width'],
+            state['metadata']['detector_distance'],
+            wavelength
+        )
+
+        state['metadata']['x_pixel_size'] = psize
+        state['metadata']['y_pixel_size'] = psize
 
     # Translations are originally given as (y, x).
     state['metadata']['translations'] = np.array(state['metadata']['translations'])
