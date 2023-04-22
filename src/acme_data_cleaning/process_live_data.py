@@ -124,9 +124,6 @@ def process_start_event(state, event, pub, config):
         state['metadata']['y_pixel_size'] = psize_interpolated
 
     else:
-        # alpha = np.arctan(psize * state['metadata']['output_frame_width'] / (2 * state['metadata']['detector_distance']))
-        # px_size = wavelength / (2 * np.sin(alpha))
-        # state['px_size_real_space'] = px_size
         state['px_size_real_space'] = calculate_px_size_real_space(
             psize,
             state['metadata']['output_frame_width'],
