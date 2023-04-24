@@ -267,7 +267,6 @@ def finalize_frame(cxi_file, state, pub, config):
         all_frames, all_masks, all_dwells)
 
     # After combining the frames, we resample them.
-
     if state['resampler'] is None:
         dummy_im = synthesized_frame
         state['resampler'] = image_handling.make_resampler(
@@ -423,10 +422,6 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
     )
     print("Initialized illumination using {} of {} frames".format(len(state['frames']), len(state['metadata_cxi']['translations'])))
 
-    # fpath = r"/homes/silvio/data/test/test_probe_mask/NS_230412297_ccdframes_0_0_offline_1withoutmask_2withmask.cxi"
-    # with h5py.File(fpath, 'r') as f:
-    #     illu = f['/entry_1/image_1/process_1/final_illumination'][()]
-
     state['metadata_cxi']['illumination_real'] = illu.real.tolist()
     state['metadata_cxi']['illumination_imag'] = illu.imag.tolist()
     state['metadata_cxi']['illumination_mask'] = illu_mask.tolist()
@@ -434,7 +429,7 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
 
     pub.send_start(state['metadata_cxi'])
 
-    time.sleep(1.0)
+    time.sleep(config['zmq_metadata_timeout'])
 
     # TODO: The index of the diffraction pattern is specified here as the index in the array.
     # TODO: This is a simplification, as it assumes that the diffraction patterns are received in order,
@@ -454,7 +449,7 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
             pos_x
         )
 
-        time.sleep(0.05)
+        time.sleep(config['zmq_data_timeout'])
 
     # TODO: write illumination and illumination mask into cxi file here.
     cxi_file.create_dataset('entry_1/instrument_1/source_1/illumination', data=illu)
