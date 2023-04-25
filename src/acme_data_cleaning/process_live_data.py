@@ -201,9 +201,7 @@ def process_exp_event(cxi_file, state, event, pub, config):
 
     if state['frame_cleaner'] is None:
         print('Creating the frame cleaner; all further darks will be disregarded')
-        state['frame_cleaner'] = \
-            image_handling.FastCCDFrameCleaner(
-                [state['darks'][dwell] for dwell in state['dwells']])
+        state['frame_cleaner'] = image_handling.FastCCDFrameCleaner([state['darks'][dwell] for dwell in state['dwells']])
 
     # Change the position from um to m.
     # state['position'] = np.array([event['data']['xPos'], event['data']['yPos']]) * 1e-6 / state['px_size_real_space']
@@ -390,11 +388,11 @@ def run_data_accumulation_loop(
             return event  # pass the event back so we can start a new loop
 
         if event['event'].lower().strip() == 'stop':
-            # process_stop_event(cxi_file, state, event, pub, config)
+            process_stop_event(cxi_file, state, event, pub, config)
             return 'stop'
 
         if event['event'].lower().strip() == 'abort':
-            # process_abort_event(cxi_file, state, event, pub, config)
+            process_abort_event(cxi_file, state, event, pub, config)
             return 'abort'
 
         elif event['event'].lower().strip() == 'frame':
@@ -451,7 +449,6 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
 
         time.sleep(config['zmq_data_timeout'])
 
-    # TODO: write illumination and illumination mask into cxi file here.
     cxi_file.create_dataset('entry_1/instrument_1/source_1/illumination', data=illu)
     cxi_file.create_dataset('entry_1/instrument_1/source_1/probe_mask', data=illu_mask)
     print("Wrote illumination and illumination mask into cxi file.")
