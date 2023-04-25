@@ -419,6 +419,9 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
         state['metadata_cxi']
     )
     print("Initialized illumination using {} of {} frames".format(len(state['frames']), len(state['metadata_cxi']['translations'])))
+    cxi_file.create_dataset('entry_1/instrument_1/source_1/illumination', data=illu)
+    cxi_file.create_dataset('entry_1/instrument_1/source_1/probe_mask', data=illu_mask.astype(int))
+    print("Wrote illumination and illumination mask into cxi file.")
 
     state['metadata_cxi']['illumination_real'] = illu.real.tolist()
     state['metadata_cxi']['illumination_imag'] = illu.imag.tolist()
@@ -448,10 +451,6 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
         )
 
         time.sleep(config['zmq_data_timeout'])
-
-    cxi_file.create_dataset('entry_1/instrument_1/source_1/illumination', data=illu)
-    cxi_file.create_dataset('entry_1/instrument_1/source_1/probe_mask', data=illu_mask)
-    print("Wrote illumination and illumination mask into cxi file.")
 
     state['illu_initialization_done'] = True
 
