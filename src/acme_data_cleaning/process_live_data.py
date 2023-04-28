@@ -420,7 +420,7 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
     )
     print("Initialized illumination using {} of {} frames".format(len(state['frames']), len(state['metadata_cxi']['translations'])))
     cxi_file.create_dataset('entry_1/instrument_1/source_1/illumination', data=illu)
-    cxi_file.create_dataset('entry_1/instrument_1/source_1/probe_mask', data=illu_mask.astype(int))
+    cxi_file.create_dataset('entry_1/instrument_1/detector_1/probe_mask', data=illu_mask.astype(int))
     print("Wrote illumination and illumination mask into cxi file.")
 
     state['metadata_cxi']['illumination_real'] = illu.real.tolist()
