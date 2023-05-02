@@ -19,7 +19,7 @@
     "min_overscan_correction": -1000,
     "shear" : [[ 0.99961877, -0.06551266],
                [ 0.02651655,  0.99879594]],
-    "dp_fraction_for_illumination_init": 1.0,
+    "dp_fraction_for_illumination_init": 0.1,
     "zmq_metadata_timeout": 1.0,
-    "zmq_data_timeout": 0.05
+    "zmq_data_timeout": 0.01
 }
