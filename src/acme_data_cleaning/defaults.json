@@ -4,7 +4,7 @@
     "use_prefect" : false,
     "reconstruction_deployment": "Reconstruct From .cxi/reconstruct-from-cxi",
     "succinct" : false,
-    "compression" : "lzf",
+    "compression" : "none",
     "chunk_size" : 10,
     "device" : "cuda:0",
     "interpolate" : false,
