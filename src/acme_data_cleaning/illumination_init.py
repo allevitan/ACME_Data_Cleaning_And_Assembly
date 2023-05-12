@@ -53,11 +53,9 @@ def calculate_real_space_px_size(energy_joule, d_sample_detector, npx_detector, 
 
 def init_illumination(dps, metadata):
     energy_joule = metadata['energy']
-    energy_ev = energy_joule / constants.e
 
     probe, probe_mask = create_illumination(dps, norm='ortho')
 
-    # if energy_ev != 700:
     distance = metadata['detector_distance']
     d_px_detector = metadata['x_pixel_size']
     npx_detector = metadata['output_frame_width']
