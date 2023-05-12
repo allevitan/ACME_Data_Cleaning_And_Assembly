@@ -41,6 +41,7 @@ def make_new_state():
         'start_sending_frames': False,
         'frames': [],
         'illu_initialization_done': False,
+        'identifier': None,
     }
 
 
@@ -69,6 +70,7 @@ def process_start_event(state, event, pub, config):
     state['mask'] = config_handling.load_mask(config)
 
     state['metadata'] = event['metadata']
+    state['identifier'] = make_dataset_name(state)
 
     if state['metadata']['double_exposure']:
         state['dwells'] = np.array([state['metadata']['dwell2'], state['metadata']['dwell1']])
@@ -138,8 +140,8 @@ def process_start_event(state, event, pub, config):
 
     state['metadata']['translations'] = state['metadata']['translations'].tolist()
 
-    identifier = make_dataset_name(state)
-    state['metadata']['identifier'] = identifier
+    # identifier = make_dataset_name(state)
+    state['metadata']['identifier'] = state['identifier']
 
     metadata_cxi = copy.deepcopy(state['metadata'])
     state['metadata_cxi'] = metadata_cxi
@@ -176,7 +178,7 @@ def make_dataset_name(state):
 
 def make_output_filename(state):
     folder = os.path.dirname(state['metadata']['header'])
-    dataset_name = make_dataset_name(state)
+    dataset_name = state['identifier']
 
     return os.path.join(folder, f"{dataset_name}.cxi")
 
@@ -289,8 +291,7 @@ def finalize_frame(cxi_file, state, pub, config):
     if state['start_sending_frames']:
         # identifier, data, index, posy, posx, metadata
         pos_x, pos_y = state['position']
-        filepath = state['metadata']['header']
-        identifier = make_dataset_name(state)
+        identifier = state['identifier']
         index = state['index']
         pub.send_frame(
             identifier,
@@ -439,8 +440,7 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
     # TODO: looks funny.
     for frame_idx, frame in enumerate(state['frames']):
         pos_x, pos_y = state['metadata_cxi']['translations'][frame_idx]
-        filepath = state['metadata']['header']
-        identifier = make_dataset_name(state)
+        identifier = state['identifier']
         index = frame_idx
         pub.send_frame(
             identifier,
