@@ -25,13 +25,6 @@ import copy
 # 3) All the metadata for the scan
 
 
-def get_dataset_name(metadata):
-    filepath = metadata['header']
-    filename = os.path.basename(filepath)
-    identifier = filename[:12]
-    return identifier
-
-
 def make_new_state():
     return {
         'metadata': None,
@@ -145,7 +138,7 @@ def process_start_event(state, event, pub, config):
 
     state['metadata']['translations'] = state['metadata']['translations'].tolist()
 
-    identifier = get_dataset_name(state['metadata'])
+    identifier = make_dataset_name(state)
     state['metadata']['identifier'] = identifier
 
     metadata_cxi = copy.deepcopy(state['metadata'])
@@ -162,9 +155,11 @@ def process_start_event(state, event, pub, config):
         yield cxi_file
 
 
-def make_output_filename(state):
-    header = state['metadata']['header']
-    header = '.'.join(header.split('.')[:-1])
+def make_dataset_name(state):
+    # header = state['metadata']['header']
+    # header = '.'.join(header.split('.')[:-1])
+    basename = os.path.basename(state['metadata']['header'])
+    basename = basename.replace('.stxm', '')
 
     # TODO: actually find the region number and energy number
     if 'scanRegion' in state['metadata']:
@@ -176,7 +171,14 @@ def make_output_filename(state):
     else:
         energy_no = 0
 
-    return header + '_ccdframes_%d_%d.cxi' % (energy_no, region_no)
+    return basename + '_ccdframes_%d_%d' % (energy_no, region_no)
+
+
+def make_output_filename(state):
+    folder = os.path.dirname(state['metadata']['header'])
+    dataset_name = make_dataset_name(state)
+
+    return os.path.join(folder, f"{dataset_name}.cxi")
 
 
 def process_dark_event(cxi_file, state, event, config):
@@ -288,8 +290,7 @@ def finalize_frame(cxi_file, state, pub, config):
         # identifier, data, index, posy, posx, metadata
         pos_x, pos_y = state['position']
         filepath = state['metadata']['header']
-        filename = os.path.basename(filepath)
-        identifier = filename[:12]
+        identifier = make_dataset_name(state)
         index = state['index']
         pub.send_frame(
             identifier,
@@ -439,8 +440,7 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
     for frame_idx, frame in enumerate(state['frames']):
         pos_x, pos_y = state['metadata_cxi']['translations'][frame_idx]
         filepath = state['metadata']['header']
-        filename = os.path.basename(filepath)
-        identifier = filename[:12]
+        identifier = make_dataset_name(state)
         index = frame_idx
         pub.send_frame(
             identifier,
