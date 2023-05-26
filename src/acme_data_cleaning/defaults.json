@@ -21,5 +21,6 @@
                [ 0.02651655,  0.99879594]],
     "dp_fraction_for_illumination_init": 0.1,
     "zmq_metadata_timeout": 1.0,
-    "zmq_data_timeout": 0.01
+    "zmq_data_timeout": 0.01,
+    "transfer_to_nersc": false
 }

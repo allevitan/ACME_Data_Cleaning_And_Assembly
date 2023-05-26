@@ -1,4 +1,5 @@
 import time
+import asyncio
 import os
 import zmq
 import h5py
@@ -11,6 +12,11 @@ import numpy as np
 from cosmicstreams.PreprocessorStream import PreprocessorStream
 from scipy import constants
 import copy
+# from splash_flows_globus.orchestration.flows.bl7012.move import process_new_file
+
+from prefect.client import OrionClient
+from prefect.orion.schemas.core import Flow, FlowRun
+from prefect.orion.schemas.states import Scheduled
 
 
 # How should I structure this? I'll get 4 kinds of events, and each event
@@ -517,6 +523,34 @@ def main(argv=sys.argv):
             # the file, to ensure that the file exists when the reconstruction
             # begins.
             trigger_ptycho(state, config)
+
+            # transfer data to NERSC
+            if config["transfer_to_nersc"]:
+                year_2digits = state['identifier'][3:5]
+                year_4digits = '20' + year_2digits
+                month = state['identifier'][5:7]
+                day = state['identifier'][7:9]
+                filepath = f"{year_4digits}/{month}/{year_2digits}{month}{day}/{state['identifier']}.cxi"
+
+                prefect_api_url = os.getenv('PREFECT_API_URL')
+                prefect_api_key = os.getenv('PREFECT_API_KEY')
+                prefect_deployment = 'process_newfile_7012_ptycho4/process_newdata7012_ptycho4'
+
+                # await prefect_start_flow(prefect_api_url, prefect_deployment, filepath, api_key=prefect_api_key)
+                asyncio.run(
+                    prefect_start_flow(prefect_api_url, prefect_deployment, filepath, api_key=prefect_api_key)
+                )
+
+
+async def prefect_start_flow(prefect_api_url, deployment_name, file_path, api_key=None):
+    client = OrionClient(prefect_api_url, api_key=api_key)
+    deployment = await client.read_deployment_by_name(deployment_name)
+    flow_run = await client.create_flow_run_from_deployment(
+        deployment.id,
+        name=os.path.basename(file_path),
+        parameters={"file_path": file_path},
+    )
+    return flow_run
 
 
 if __name__ == '__main__':
