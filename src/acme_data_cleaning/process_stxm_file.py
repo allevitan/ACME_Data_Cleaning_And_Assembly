@@ -27,6 +27,7 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
     # to generate the .cxi file
     # TODO: Set up a system that can flexibly do N exposures
     if metadata['double_exposure']:
+        exp_type = 'double'
         n_exp_per_point=2
         # Note: Old files have dwell1 meaning the second exposure and
         # dwell2 meaning the first exposure
@@ -35,15 +36,42 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
         if not config['succinct']:
             print('File uses double exposures with exposure times',
                   exposure_times)
+    elif 'n_repeats' in metadata and metadata['n_repeats'] != 1:
+        exp_type = 'repeated'
+        n_exp_per_point = int(metadata['n_repeats'])
+        exposure_times = np.array([metadata['dwell1']]
+                                  * n_exp_per_point)
+        if not config['succinct']:
+            print('File uses repeated exposures,', n_exp_per_point,
+                  'repeats of', metadata['dwell1'], 'ms exposures')
     else:
+        exp_type = 'single'
         n_exp_per_point=1
         exposure_times = np.array([metadata['dwell1']])
         if not config['succinct']:
             print('File uses single exposures')
-    
-    # This gets a list of mean dark patterns, one per exposure time
-    darks = file_handling.read_mean_darks_from_stxm(
-        stxm_file, n_exp_per_point=n_exp_per_point, device=config['device'])
+
+    if config['use_all_exposures'].lower().strip() == 'auto':
+        use_all_exposures = (True if exp_type=='repeated' else False)
+    else:
+        use_all_exposures = config['use_all_exposures']
+        
+    if not config['succinct']:
+        if use_all_exposures:
+            print('Will include data from all non-saturated exposures, best for repeated exposures with identical dwell times.')
+        else:
+            print('Will only include data from the longest non-saturated exposure, best for double exposures with differing dwell times')
+
+
+    if exp_type == 'repeated':
+        # This gets a list of mean dark patterns, and we know that all the darks
+        # share the same exposure, so we treat them the same
+        darks = file_handling.read_mean_darks_from_stxm(
+            stxm_file, n_exp_per_point=1, device=config['device'])
+    else:
+        # This gets a list of mean dark patterns, one per exposure time
+        darks = file_handling.read_mean_darks_from_stxm(
+            stxm_file, n_exp_per_point=n_exp_per_point, device=config['device'])
     
 
     # Now we instantiate a frame cleaner object and a resampling object.
@@ -87,24 +115,39 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
                       'to', min(n_frames, (idx+1)*config['chunk_size']),
                       'of', n_frames, end='\r')
 
-            # index here is the index of the frame within the exposure, but idx
-            # refers to the index of the chunk we're dealing with
-            cleaned_exps, masks = zip(
-                *(frame_cleaner.process_frame(
-                    exp, index, include_overscan=False,
-                    med_width=config['background_median_width'],
-                    max_correction=config['max_overscan_correction'],
-                    min_correction=config['min_overscan_correction'],
-                    background_offset=config['background_offset'],
-                    cut_zeros=config['cut_zeros'])
-                  for index, exp in enumerate(exps)))
+            # We have to treat the repeated exposure case separately
+            # because all the exposures use the same darks
+            if exp_type == 'repeated':
+                cleaned_exps, masks = zip(
+                    *(frame_cleaner.process_frame(
+                        exp, 0, include_overscan=False,
+                        med_width=config['background_median_width'],
+                        max_correction=config['max_overscan_correction'],
+                        min_correction=config['min_overscan_correction'],
+                        background_offset=config['background_offset'],
+                        cut_zeros=config['cut_zeros'])
+                      for exp in exps))
+            else:
+                
+                # index here is the index of the frame within the exposure, but
+                # idx refers to the index of the chunk we're dealing with
+                cleaned_exps, masks = zip(
+                    *(frame_cleaner.process_frame(
+                        exp, index, include_overscan=False,
+                        med_width=config['background_median_width'],
+                        max_correction=config['max_overscan_correction'],
+                        min_correction=config['min_overscan_correction'],
+                        background_offset=config['background_offset'],
+                        cut_zeros=config['cut_zeros'])
+                      for index, exp in enumerate(exps)))
             
             # Because combine_exposures works with an arbitrary number of
             # exposures, we just always use it, and avoid needing a separate
             # case for the single and double exposure processing.
             synthesized_exps, synthesized_masks = \
                 image_handling.combine_exposures(
-                    t.stack(cleaned_exps), t.stack(masks), exposure_times)
+                    t.stack(cleaned_exps), t.stack(masks), exposure_times,
+                    use_all_exposures=use_all_exposures)
 
             
             # Now we resample the outputs to the requested format
