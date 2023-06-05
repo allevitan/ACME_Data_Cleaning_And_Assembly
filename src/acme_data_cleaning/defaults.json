@@ -4,7 +4,7 @@
     "use_prefect" : false,
     "reconstruction_deployment": "Reconstruct From .cxi/reconstruct-from-cxi",
     "succinct" : false,
-    "compression" : "lzf",
+    "compression" : "none",
     "chunk_size" : 10,
     "device" : "cuda:0",
     "interpolate" : false,
@@ -18,5 +18,12 @@
     "max_overscan_correction": 50,
     "min_overscan_correction": -1000,
     "shear" : [[ 0.99961877, -0.06551266],
-               [ 0.02651655,  0.99879594]]
+               [ 0.02651655,  0.99879594]],
+    "dp_fraction_for_illumination_init": 0.1,
+    "zmq_metadata_timeout": 1.0,
+    "zmq_data_timeout": 0.01,
+    "transfer_to_nersc": false,
+    "nersc_prefect_deployment": "process_newfile_7012_ptycho4/process_newdata7012_ptycho4",
+    "ref_defocus_length_um": 15,
+    "ref_defocus_energy_eV": 700
 }
