@@ -32,13 +32,13 @@ def propnf(a, z, l):
     return np.fft.ifftn(np.fft.fftn(a) * np.exp(-2j * np.pi * (z / l) * (np.sqrt(1 - q2 * (l / n) ** 2) - 1)))
 
 
-def defocus_illumination(probe, energy_joule, px_size_nm):
+def defocus_illumination(probe, energy_joule, px_size_nm, ref_defocus_length_um, ref_defocus_energy_eV):
     probe_defocused = probe.copy()
     energy_eV = energy_joule / constants.e
     # l = 1240. / energy_eV
     l = constants.h * constants.c / energy_joule
     l_nm = l * 1e9
-    defocus = 15. * energy_eV / 700.
+    defocus = ref_defocus_length_um * energy_eV / ref_defocus_energy_eV
     probe_defocused = propnf(probe_defocused, defocus * 1000. / px_size_nm, l_nm / px_size_nm)
     return probe_defocused
 
@@ -51,7 +51,7 @@ def calculate_real_space_px_size(energy_joule, d_sample_detector, npx_detector, 
     return px_size
 
 
-def init_illumination(dps, metadata):
+def init_illumination(dps, metadata, config):
     energy_joule = metadata['energy']
 
     probe, probe_mask = create_illumination(dps, norm='ortho')
@@ -67,6 +67,12 @@ def init_illumination(dps, metadata):
     )
     px_size_nm = px_size_m * 1e9
 
-    probe = defocus_illumination(probe, energy_joule, px_size_nm)
+    probe = defocus_illumination(
+        probe,
+        energy_joule,
+        px_size_nm,
+        config['ref_defocus_length_um'],
+        config['ref_defocus_energy_eV']
+    )
 
     return probe, probe_mask

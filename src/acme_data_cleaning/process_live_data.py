@@ -214,7 +214,6 @@ def process_exp_event(cxi_file, state, event, pub, config):
         state['frame_cleaner'] = image_handling.FastCCDFrameCleaner([state['darks'][dwell] for dwell in state['dwells']])
 
     # Change the position from um to m.
-    # state['position'] = np.array([event['data']['xPos'], event['data']['yPos']]) * 1e-6 / state['px_size_real_space']
     state['position'] = np.array([event['data']['xPos'], event['data']['yPos']]) * 1e-6  # / state['px_size_real_space']
 
     # A correction for the shear in the probe positions
@@ -295,7 +294,6 @@ def finalize_frame(cxi_file, state, pub, config):
     numpy_resampled_frame = resampled_frame.cpu().numpy()
 
     if state['start_sending_frames']:
-        # identifier, data, index, posy, posx, metadata
         pos_x, pos_y = state['position']
         identifier = state['identifier']
         index = state['index']
@@ -424,7 +422,8 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
 
     illu, illu_mask = illumination_init.init_illumination(
         np.array(state['frames']),
-        state['metadata_cxi']
+        state['metadata_cxi'],
+        config
     )
     print("Initialized illumination using {} of {} frames".format(len(state['frames']), len(state['metadata_cxi']['translations'])))
     cxi_file.create_dataset('entry_1/instrument_1/source_1/illumination', data=illu)
@@ -436,14 +435,15 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
     state['metadata_cxi']['illumination_mask'] = illu_mask.tolist()
     state['metadata_cxi']['dp_fraction_for_illumination_init'] = config['dp_fraction_for_illumination_init']
 
+    print("Sending start event.")
     pub.send_start(state['metadata_cxi'])
-
     time.sleep(config['zmq_metadata_timeout'])
 
     # TODO: The index of the diffraction pattern is specified here as the index in the array.
     # TODO: This is a simplification, as it assumes that the diffraction patterns are received in order,
     # TODO: which is not necessarily true. However, left for now and can be fixed if the reconstruction
     # TODO: looks funny.
+    print("Sending the frames that have been received so far.")
     for frame_idx, frame in enumerate(state['frames']):
         pos_x, pos_y = state['metadata_cxi']['translations'][frame_idx]
         identifier = state['identifier']
@@ -512,9 +512,9 @@ def main(argv=sys.argv):
 
             if return_code == 'stop':
                 start_event = None
-                pub.send_stop({})
+                pub.send_stop({'identifier': state['identifier']})
             elif return_code == 'abort':
-                pub.send_abort({})
+                pub.send_abort({'identifier': state['identifier']})
                 start_event = None
             else:
                 start_event = return_code
@@ -534,9 +534,8 @@ def main(argv=sys.argv):
 
                 prefect_api_url = os.getenv('PREFECT_API_URL')
                 prefect_api_key = os.getenv('PREFECT_API_KEY')
-                prefect_deployment = 'process_newfile_7012_ptycho4/process_newdata7012_ptycho4'
+                prefect_deployment = config['nersc_prefect_deployment']
 
-                # await prefect_start_flow(prefect_api_url, prefect_deployment, filepath, api_key=prefect_api_key)
                 asyncio.run(
                     prefect_start_flow(prefect_api_url, prefect_deployment, filepath, api_key=prefect_api_key)
                 )
