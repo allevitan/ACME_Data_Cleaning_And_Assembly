@@ -71,11 +71,15 @@ def read_translations_from_stxm(stxm_file):
     rather than defined plan stored in the json metadata dictionary.
     """
     # We need to convert from um to meters
-    x_pos = np.array(stxm_file['entry0/instrument/sample_x/data'],
-                     dtype=np.float32) * 1e-6
-    y_pos = np.array(stxm_file['entry0/instrument/sample_y/data'],
-                     dtype=np.float32) * 1e-6
-
+    #x_pos = np.array(stxm_file['entry0/instrument/sample_x/data'],
+    #                 dtype=np.float32) * 1e-6
+    #y_pos = np.array(stxm_file['entry0/instrument/sample_y/data'],
+    #                 dtype=np.float32) * 1e-6
+    metadata = json.loads(np.array(stxm_file['metadata'])[()])
+    translations = np.array(metadata['translations'])
+    x_pos = translations[:,1]
+    y_pos = translations[:,0]
+    
     return np.stack([x_pos, y_pos, np.zeros_like(x_pos)], axis=-1)
 
 
