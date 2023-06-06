@@ -78,7 +78,6 @@ def process_start_event(state, event, pub, config):
 
     state['metadata'] = event['metadata']
     state['identifier'] = make_dataset_name(state)
-
     if state['metadata']['double_exposure']:
         state['exp_type'] = 'double'
         state['dwells'] = np.array([state['metadata']['dwell2'], state['metadata']['dwell1']])
@@ -86,8 +85,8 @@ def process_start_event(state, event, pub, config):
     elif 'n_repeats' in state['metadata'] and state['metadata']['n_repeats']!=1:
         state['exp_type'] = 'repeated'
         state['dwells'] = np.array([state['metadata']['dwell1']])
-        print('Start event indicates repeated exposures,', n_exp_per_point,
-              'repeats of', metadata['dwell1'], 'ms exposures')
+        print('Start event indicates repeated exposures,', state['metadata']['n_repeats'],
+              'repeats of', state['metadata']['dwell1'], 'ms exposures')
 
     else:
         state['exp_type'] = 'single'
