@@ -302,9 +302,13 @@ class FastCCDFrameCleaner(FrameCleaner):
         # TODO: Find a more natural way to match frames to darks than an
         # index. Maybe key it by exposure time?
 
+        # TODO: Saturation masks should be treated differently from the main
+        # mask, because we shouldn't zero out the data.
+        
         tiles = self.map_raw_to_tiles(exp)
         saturation_mask = self.make_saturation_mask(tiles)
-        mask = saturation_mask if mask is None else mask * saturation_mask
+        # NOTE: I'm just ignoring masks now
+        mask = saturation_mask #if mask is None else mask * saturation_mask
         subtracted = tiles - self.darks[idx]
 
         cleaned = self.apply_overscan_background_subtraction(
@@ -315,6 +319,7 @@ class FastCCDFrameCleaner(FrameCleaner):
         frames = self.map_tiles_to_frame(
             cleaned, include_overscan=include_overscan)
 
+        
         mask = self.map_tiles_to_frame(
             mask, include_overscan=include_overscan)
 
@@ -349,10 +354,18 @@ def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
     exposure_times = t.as_tensor(exposure_times,
                                  dtype=frames[0].dtype,
                                  device=frames[0].device)
+
     # This sets up the masks that we need if we plan to use all the exposures
     num_trailing_dimensions = len(frames[0].shape)
 
+    # TODO: This is a kludge, which always set the shortest exposure to
+    # be unmasked, even if it is saturated
+    all_masked = t.prod(masks, dim=0)
+    masks[t.argmin(exposure_times)][all_masked.to(dtype=t.bool)] = 0
+
     inverse_masks = ~masks
+
+
     exposure_weighted_masks = (inverse_masks.to(dtype=t.float32)
                                * exposure_times.reshape(
                 [len(exposure_times), ] + [1, ] * num_trailing_dimensions))
@@ -368,7 +381,8 @@ def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
             mask_at_this_index = (mask_idx == idx)
             exposure_weighted_masks[idx] = exp_time * mask_at_this_index
             inverse_masks[idx] = mask_at_this_index
-
+        
+            
     # Finally, we use these masks to generate the output data
     total_data = t.sum((inverse_masks) * frames, dim=0)
     total_exposure = t.sum(exposure_weighted_masks, dim=0)
@@ -378,7 +392,7 @@ def combine_exposures(frames, masks, exposure_times, use_all_exposures=False):
     # This sets things which were fully masked off to zero instead of nan
     synthesized_frame = t.nan_to_num(synthesized_frame)
 
-    synthesized_mask = t.prod(masks, dim=0)
+    synthesized_mask = t.prod(masks, dim=0) #* 0
 
     return synthesized_frame, synthesized_mask
 
