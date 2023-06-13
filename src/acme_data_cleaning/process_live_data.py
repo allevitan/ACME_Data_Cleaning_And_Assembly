@@ -350,7 +350,7 @@ def finalize_frame(cxi_file, state, pub, config):
 
 
 def trigger_ptycho(state, config):
-    if not config['use_prefect']:
+    if not config['prefect_cdtools_local']:
         print('Not triggering ptychography, because I not using prefect')
     else:
         print('Triggering ptychography via prefect API')
@@ -360,7 +360,8 @@ def trigger_ptycho(state, config):
             'path': output_filename,
         }
         try:
-            run_deployment(name='Reconstruct from .cxi/reconstruct-from-cxi',
+            deployment = config['prefect_cdtools_local_deployment']
+            run_deployment(name=deployment,
                            parameters=parameters,
                            timeout=0)
         except:
@@ -555,19 +556,26 @@ def main(argv=sys.argv):
             trigger_ptycho(state, config)
 
             # Local reconstruction at cosmic machines, if wanted.
-            if config['local_prefect_reconstruction']:
+            if config['prefect_ptychocam_local']:
+                print("[prefect]: Initializing local reconstruction.")
                 parameters = {
-                        'cxipath': make_output_filename(state)
-                        }
+                    'cxipath': make_output_filename(state),
+                    'n_gpus': config['prefect_ptychocam_local_n_gpus'],
+                    'n_iterations': config['prefect_ptychocam_local_n_iterations'],
+                    'period_illu_refine': config['prefect_ptychocam_local_period_illu_refine'],
+                    'period_bg_refine': config['prefect_ptychocam_local_period_bg_refine'],
+                    'use_illu_mask': config['prefect_ptychocam_local_use_illu_mask'],
+                }
 
                 run_deployment(
-                        name=config['local_prefect_deployment'],
+                        name=config['prefect_ptychocam_local_deployment'],
                         parameters=parameters,
                         timeout=0
                         )
 
             # transfer data to NERSC
-            if config["transfer_to_nersc"]:
+            if config["prefect_nersc_transfer"]:
+                print("[prefect]: Initializing data transfer to NERSC.")
                 year_2digits = state['identifier'][3:5]
                 year_4digits = '20' + year_2digits
                 month = state['identifier'][5:7]
@@ -576,7 +584,7 @@ def main(argv=sys.argv):
 
                 prefect_api_url = os.getenv('PREFECT_API_URL')
                 prefect_api_key = os.getenv('PREFECT_API_KEY')
-                prefect_deployment = config['nersc_prefect_deployment']
+                prefect_deployment = config['prefect_nersc_transfer_deployment']
 
                 asyncio.run(
                     prefect_start_flow(prefect_api_url, prefect_deployment, filepath, api_key=prefect_api_key)
