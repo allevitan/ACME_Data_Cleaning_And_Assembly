@@ -375,4 +375,20 @@ def add_mask(cxi_file, mask):
         mask_to_save = mask_to_save.astype(np.uint32)
         
         cxi_file[groups['detector'] + 'mask'][:,:] = mask_to_save
-    
+
+def add_probe(cxi_file, probe, probe_mask):
+    mask_to_save = probe_mask
+    probe_to_save = probe
+    if groups['detector'] + 'probe_mask' not in cxi_file:
+        cxi_file.create_dataset(groups['detector'] + 'probe_mask',
+                                data=mask_to_save)
+        cxi_file.create_dataset(groups['detector'] + 'probe',
+                        data=probe_to_save) 
+        cxi_file.create_dataset(groups['detector'] + 'data_illumination',
+                        data=probe_to_save) 
+        cxi_file.create_dataset(groups['source'] + 'probe',
+                        data=probe_to_save)
+        cxi_file.create_dataset(groups['source'] + 'data_illumination',
+                        data=probe_to_save)
+        cxi_file.create_dataset(groups['source'] + 'illumination',
+                        data=probe_to_save) 

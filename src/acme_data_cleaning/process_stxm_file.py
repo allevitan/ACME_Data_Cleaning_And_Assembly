@@ -11,6 +11,25 @@ import glob
 from acme_data_cleaning import image_handling, file_handling, config_handling
 
 
+def delete_bad_frames(frames, translations):
+    sh = frames.shape
+    ny, nx = sh[1] // 2, sh[2] // 2
+    idx = []
+    for i in range(len(frames)):
+        if frames[i, ny - 5: ny + 5, 0: 100].mean() > 2. * frames[i, ny - 5: ny + 5, -100:].mean():
+            pass
+        else:
+            idx.append(i)
+    #print("Indices: ", idx)
+    return frames[idx], translations[idx]
+
+def init_probe(frames):
+    dataAve = frames.cpu().mean(0)
+    pMask = np.fft.fftshift((dataAve > 0.01 * dataAve.max()))
+    probe = np.sqrt(np.fft.fftshift(dataAve)) * pMask
+    probe = np.fft.ifftshift(np.fft.ifftn(probe))
+    return probe, pMask
+
 
 def process_file(stxm_file, output_filename, config, default_mask=None):
     """Processes a single stxm file to .cxi
@@ -163,12 +182,18 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
                 config['shear'],
                 chunk_translations[:,:2].transpose()).transpose()
 
+            resampled_exps, chunk_translations = delete_bad_frames(resampled_exps, chunk_translations)
+            if idx == 0:
+                probe, probe_mask = init_probe(resampled_exps)
+                file_handling.add_probe(cxi_file, probe, probe_mask)
+
             # This actually adds the frames to the cxi file
-            file_handling.add_frames(cxi_file,
-                                     resampled_exps,
-                                     chunk_translations,
-                                     masks=resampled_masks,
-                                     compression=config['compression'])
+            if len(resampled_exps) != 0:
+                file_handling.add_frames(cxi_file,
+                                        resampled_exps,
+                                        chunk_translations,
+                                        masks=resampled_masks,
+                                        compression=config['compression'])
             
         print('Finished processing                                          ')
 
