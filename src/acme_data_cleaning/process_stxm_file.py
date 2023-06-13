@@ -168,7 +168,6 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
                     t.stack(cleaned_exps), t.stack(masks), exposure_times,
                     use_all_exposures=use_all_exposures)
 
-            
             # Now we resample the outputs to the requested format
             resampled_exps, resampled_masks = \
                 resampler.resample(synthesized_exps,
@@ -182,7 +181,9 @@ def process_file(stxm_file, output_filename, config, default_mask=None):
                 config['shear'],
                 chunk_translations[:,:2].transpose()).transpose()
 
-            resampled_exps, chunk_translations = delete_bad_frames(resampled_exps, chunk_translations)
+            if config["delete_bad_frames"]:
+                resampled_exps, chunk_translations = delete_bad_frames(resampled_exps, chunk_translations)
+
             if idx == 0:
                 probe, probe_mask = init_probe(resampled_exps)
                 file_handling.add_probe(cxi_file, probe, probe_mask)
