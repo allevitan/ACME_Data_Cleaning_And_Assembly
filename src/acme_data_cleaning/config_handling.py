@@ -113,7 +113,7 @@ def blend_args_with_config(args, config):
     if config['compression'] is not None and \
        config['compression'].lower().strip() == 'none':
         config['compression'] = None
-    else:
+    elif config['compression'] is not None:
         config['compression'] = config['compression'].lower().strip()
 
     return config

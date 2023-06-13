@@ -17,6 +17,7 @@ import copy
 from prefect.client import OrionClient
 from prefect.orion.schemas.core import Flow, FlowRun
 from prefect.orion.schemas.states import Scheduled
+from prefect.deployments import run_deployment
 
 
 # How should I structure this? I'll get 4 kinds of events, and each event
@@ -34,6 +35,7 @@ from prefect.orion.schemas.states import Scheduled
 def make_new_state():
     return {
         'metadata': None,
+        'exp_type': None,
         'dwells': None,
         'darks': None,
         'n_darks': None,
@@ -77,13 +79,30 @@ def process_start_event(state, event, pub, config):
 
     state['metadata'] = event['metadata']
     state['identifier'] = make_dataset_name(state)
-
     if state['metadata']['double_exposure']:
+        state['exp_type'] = 'double'
         state['dwells'] = np.array([state['metadata']['dwell2'], state['metadata']['dwell1']])
         print('Start event indicates double exposures with exposure times', state['dwells'])
+    elif 'n_repeats' in state['metadata'] and state['metadata']['n_repeats']!=1:
+        state['exp_type'] = 'repeated'
+        state['dwells'] = np.array([state['metadata']['dwell1']])
+        print('Start event indicates repeated exposures,', state['metadata']['n_repeats'],
+              'repeats of', state['metadata']['dwell1'], 'ms exposures')
+
     else:
+        state['exp_type'] = 'single'
         state['dwells'] = np.array([state['metadata']['dwell1']])
         print('Start event indicates single exposures.')
+
+
+    if config['use_all_exposures'].lower().strip() == 'auto':
+        state['use_all_exposures'] = (True if state['exp_type'] =='repeated'
+                                      else False)
+        print('Will include data from all non-saturated exposures, best for repeated exposures with identical dwell times.')
+    else:
+        state['use_all_exposures'] = config['use_all_exposures']
+        print('Will only include data from the longest non-saturated exposure, best for double exposures with differing dwell times')
+
 
     # We need to add the basis to the metadata
     # psize is given in um and change to m here.
@@ -523,6 +542,18 @@ def main(argv=sys.argv):
             # the file, to ensure that the file exists when the reconstruction
             # begins.
             trigger_ptycho(state, config)
+
+            # Local reconstruction at cosmic machines, if wanted.
+            if config['local_prefect_reconstruction']:
+                parameters = {
+                        'cxipath': make_output_filename(state)
+                        }
+
+                run_deployment(
+                        name='ptychocam_from_cxi/ptychocam_from_cxi',
+                        parameters=parameters,
+                        timeout=0
+                        )
 
             # transfer data to NERSC
             if config["transfer_to_nersc"]:

@@ -3,3 +3,4 @@
 *.pyc
 *.egg-info
 src/acme_data_cleaning/config.json
+build/
