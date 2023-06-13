@@ -28,6 +28,7 @@
     "ref_defocus_length_um": 60,
     "ref_defocus_energy_eV": 700,
     "local_prefect_reconstruction": false,
+    "local_prefect_deployment": "ptychocam_from_cxi/ptychocam_from_cxi",
     "use_streak_mask": false,
     "delete_bad_frames": false
 }
