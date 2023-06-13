@@ -17,6 +17,7 @@ import copy
 from prefect.client import OrionClient
 from prefect.orion.schemas.core import Flow, FlowRun
 from prefect.orion.schemas.states import Scheduled
+from prefect.deployments import run_deployment
 
 
 # How should I structure this? I'll get 4 kinds of events, and each event
@@ -541,6 +542,18 @@ def main(argv=sys.argv):
             # the file, to ensure that the file exists when the reconstruction
             # begins.
             trigger_ptycho(state, config)
+
+            # Local reconstruction at cosmic machines, if wanted.
+            if config['local_prefect_reconstruction']:
+                parameters = {
+                        'cxipath': make_output_filename(state)
+                        }
+
+                run_deployment(
+                        name='ptychocam_from_cxi/ptychocam_from_cxi',
+                        parameters=parameters,
+                        timeout=0
+                        )
 
             # transfer data to NERSC
             if config["transfer_to_nersc"]:
