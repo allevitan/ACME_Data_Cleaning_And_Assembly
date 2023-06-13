@@ -561,7 +561,7 @@ def main(argv=sys.argv):
                         }
 
                 run_deployment(
-                        name='ptychocam_from_cxi/ptychocam_from_cxi',
+                        name=config['local_prefect_deployment'],
                         parameters=parameters,
                         timeout=0
                         )
