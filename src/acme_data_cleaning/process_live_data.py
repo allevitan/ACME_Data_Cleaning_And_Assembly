@@ -313,6 +313,11 @@ def finalize_frame(cxi_file, state, pub, config):
     numpy_resampled_frame = resampled_frame.cpu().numpy()
 
     if state['start_sending_frames']:
+        # identifier, data, index, posy, posx, metadata
+        if 'streak_mask' in state:
+            numpy_resampled_frame = numpy_resampled_frame * state['streak_mask']
+
+        
         pos_x, pos_y = state['position']
         identifier = state['identifier']
         index = state['index']
@@ -444,6 +449,9 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
         state['metadata_cxi'],
         config
     )
+    streak_mask = illumination_init.create_streak_mask(illu_mask)
+    state['streak_mask'] = streak_mask
+    
     print("Initialized illumination using {} of {} frames".format(len(state['frames']), len(state['metadata_cxi']['translations'])))
     cxi_file.create_dataset('entry_1/instrument_1/source_1/illumination', data=illu)
     cxi_file.create_dataset('entry_1/instrument_1/detector_1/probe_mask', data=illu_mask.astype(int))
@@ -464,6 +472,9 @@ def send_start_and_existing_frames(cxi_file, pub, state, config):
     # TODO: looks funny.
     print("Sending the frames that have been received so far.")
     for frame_idx, frame in enumerate(state['frames']):
+        if 'streak_mask' in state:
+            frame = frame * state['streak_mask']
+
         pos_x, pos_y = state['metadata_cxi']['translations'][frame_idx]
         identifier = state['identifier']
         index = frame_idx

@@ -10,6 +10,21 @@ def create_illumination(dps, norm='backward'):
     return probe, pMask
 
 
+def create_streak_mask(probe_mask):
+    probe_mask_shifted = np.fft.fftshift(probe_mask)
+    mask = np.ones_like(probe_mask)
+    sh = mask.shape
+    indices = np.where(probe_mask_shifted > 0)
+    ymin = min(indices[0])
+    ymax = max(indices[0])
+    xmin = 0
+    xmax = sh[1] // 2
+    mask[ymin:ymax,xmin:xmax] = 0
+    mask = probe_mask_shifted | mask
+    mask = np.array(mask, dtype=int)
+    return mask
+
+
 def propnf(a, z, l):
     """
     propnf(a,z,l) where z and l are in pixel units
