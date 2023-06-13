@@ -25,6 +25,7 @@
     "zmq_data_timeout": 0.01,
     "transfer_to_nersc": false,
     "nersc_prefect_deployment": "process_newfile_7012_ptycho4/process_newdata7012_ptycho4",
-    "ref_defocus_length_um": 15,
-    "ref_defocus_energy_eV": 700
+    "ref_defocus_length_um": 60,
+    "ref_defocus_energy_eV": 700,
+    "local_prefect_reconstruction": false
 }
