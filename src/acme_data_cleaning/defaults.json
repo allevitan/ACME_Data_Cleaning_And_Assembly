@@ -1,8 +1,6 @@
 {
     "broadcast_port" : "tcp://*:37013",
     "subscription_port" : "tcp://localhost:37012",
-    "prefect_cdtools_local" : false,
-    "prefect_cdtools_local_deployment": "Reconstruct From .cxi/reconstruct-from-cxi",
     "succinct" : false,
     "compression" : "none",
     "chunk_size" : 100,
@@ -23,17 +21,33 @@
     "dp_fraction_for_illumination_init": 0.1,
     "zmq_metadata_timeout": 1.0,
     "zmq_data_timeout": 0.01,
-    "prefect_nersc_transfer": false,
-    "prefect_nersc_transfer_deployment": "process_newfile_7012_ptycho4/process_newdata7012_ptycho4",
     "ref_defocus_length_um": 15,
     "ref_defocus_energy_eV": 700,
+    "use_streak_mask": false,
+    "delete_bad_frames": false,
+
+    "prefect_nersc_transfer": false,
+    "prefect_nersc_transfer_deployment": "process_newfile_7012_ptycho4/process_newdata7012_ptycho4",
+
+    "prefect_cdtools_local" : false,
+    "prefect_cdtools_local_deployment": "cdtools_from_cxi/cdtools_from_cxi",
+    "prefect_cdtools_local_run_split_reconstructions": false,
+    "prefect_cdtools_local_n_modes": 1,
+    "prefect_cdtools_local_oversampling_factor": 1,
+    "prefect_cdtools_local_simulate_probe_translation": true,
+    "prefect_cdtools_local_n_init_rounds": 1,
+    "prefect_cdtools_local_n_init_iter": 50,
+    "prefect_cdtools_local_n_final_iter": 50,
+    "prefect_cdtools_local_translation_randomization": 0,
+    "prefect_cdtools_local_probe_initialization": null,
+    "prefect_cdtools_local_init_background": false,
+    "prefect_cdtools_local_probe_support_radius": null,
+
     "prefect_ptychocam_local": false,
     "prefect_ptychocam_local_deployment": "ptychocam_from_cxi/ptychocam_from_cxi",
     "prefect_ptychocam_local_n_gpus": 4,
     "prefect_ptychocam_local_n_iterations": 2000,
     "prefect_ptychocam_local_period_illu_refine": 1,
     "prefect_ptychocam_local_period_bg_refine": 1,
-    "prefect_ptychocam_local_use_illu_mask": true,
-    "use_streak_mask": false,
-    "delete_bad_frames": false
+    "prefect_ptychocam_local_use_illu_mask": true
 }
