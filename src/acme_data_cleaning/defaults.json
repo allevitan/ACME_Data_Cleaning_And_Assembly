@@ -5,7 +5,7 @@
     "prefect_cdtools_local_deployment": "Reconstruct From .cxi/reconstruct-from-cxi",
     "succinct" : false,
     "compression" : "none",
-    "chunk_size" : 10,
+    "chunk_size" : 100,
     "device" : "cuda:0",
     "interpolate" : false,
     "center" : [ 480, 480 ],
