@@ -349,25 +349,6 @@ def finalize_frame(cxi_file, state, pub, config):
         send_start_and_existing_frames(cxi_file, pub, state, config)
 
 
-def trigger_ptycho(state, config):
-    if not config['prefect_cdtools_local']:
-        print('Not triggering ptychography, because I not using prefect')
-    else:
-        print('Triggering ptychography via prefect API')
-        output_filename = make_output_filename(state)
-        output_filename = '/'.join(output_filename.split('/')[5:])
-        parameters = {
-            'path': output_filename,
-        }
-        try:
-            deployment = config['prefect_cdtools_local_deployment']
-            run_deployment(name=deployment,
-                           parameters=parameters,
-                           timeout=0)
-        except:
-            print('Failed to contact prefect')
-
-
 def process_stop_event(cxi_file, state, event, pub, config):
     if state['metadata'] is None:
         # This is just a backup check, the upstream logic *should* prevent
@@ -550,50 +531,94 @@ def main(argv=sys.argv):
             else:
                 start_event = return_code
 
-            # we wait to trigger the ptycho reconstruction until after saving
-            # the file, to ensure that the file exists when the reconstruction
-            # begins.
-            trigger_ptycho(state, config)
+            # Local cdtools reconstruction at cosmic machines, if wanted.
+            if config['prefect_cdtools_local']:
+                try:
+                    prefect_cdtools_local(state, config)
+                except Exception as e:
+                    print("Prefect local cdtools reconstruction failed due to: {}".format(e))
 
-            # Local reconstruction at cosmic machines, if wanted.
+            # Local ptychocam reconstruction at cosmic machines, if wanted.
             if config['prefect_ptychocam_local']:
                 try:
-                    print("[prefect]: Initializing local reconstruction.")
-                    parameters = {
-                        'cxipath': make_output_filename(state),
-                        'n_gpus': config['prefect_ptychocam_local_n_gpus'],
-                        'n_iterations': config['prefect_ptychocam_local_n_iterations'],
-                        'period_illu_refine': config['prefect_ptychocam_local_period_illu_refine'],
-                        'period_bg_refine': config['prefect_ptychocam_local_period_bg_refine'],
-                       'use_illu_mask': config['prefect_ptychocam_local_use_illu_mask'],
-                    }
-
-                    run_deployment(
-                            name=config['prefect_ptychocam_local_deployment'],
-                            parameters=parameters,
-                            timeout=0
-                            )
+                    prefect_ptychocam_local(state, config)
                 except Exception as e:
                     print("Prefect local ptychocam reconstruction failed due to: {}".format(e))
 
-            # transfer data to NERSC
+            # Data transfer to NERSC
             if config["prefect_nersc_transfer"]:
                 try:
-                    print("[prefect]: Initializing data transfer to NERSC.")
-                    year_2digits = state['identifier'][3:5]
-                    year_4digits = '20' + year_2digits
-                    month = state['identifier'][5:7]
-                    day = state['identifier'][7:9]
-                    filepath = f"{year_4digits}/{month}/{year_2digits}{month}{day}/{state['identifier']}.cxi"
-
-                    prefect_api_url = os.getenv('PREFECT_API_URL')
-                    prefect_api_key = os.getenv('PREFECT_API_KEY')
-                    prefect_deployment = config['prefect_nersc_transfer_deployment']
-
-                    asyncio.run(prefect_start_flow(prefect_api_url, prefect_deployment, filepath, api_key=prefect_api_key)
-                    )
+                    prefect_nersc_transfer(state, config)
                 except Exception as e:
                     print("NERSC data transfer failed due to: {}".format(e))
+
+
+def prefect_cdtools_local(state, config):
+    print('[prefect]: Initializing local cdtools reconstruction.')
+    output_filename = make_output_filename(state)
+
+    out_of_focus_distance_m = config['ref_defocus_length_um'] * 1e-6 * state['metadata']['energy'] / config['ref_defocus_energy_eV']
+
+    parameters = {
+        'path': output_filename,
+        "run_split_reconstructions": config["prefect_cdtools_local_run_split_reconstructions"],
+        "n_modes": config["prefect_cdtools_local_n_modes"],
+        "oversampling_factor": config["prefect_cdtools_local_oversampling_factor"],
+        "propagation_distance": out_of_focus_distance_m,
+        "simulate_probe_translation": config["prefect_cdtools_local_simulate_probe_translation"],
+        "n_init_rounds": config["prefect_cdtools_local_n_init_rounds"],
+        "n_init_iter": config["prefect_cdtools_local_n_init_iter"],
+        "n_final_iter": config["prefect_cdtools_local_n_final_iter"],
+        "translation_randomization": config["prefect_cdtools_local_translation_randomization"],
+        "probe_initialization": config["prefect_cdtools_local_probe_initialization"],
+        "init_background": config["prefect_cdtools_local_init_background"],
+        "probe_support_radius": config["prefect_cdtools_local_probe_support_radius"],
+    }
+
+    deployment = config['prefect_cdtools_local_deployment']
+    run_deployment(name=deployment,
+                   parameters=parameters,
+                   timeout=0)
+
+
+def prefect_ptychocam_local(state, config):
+    print("[prefect]: Initializing local ptychocam reconstruction.")
+    parameters = {
+        'cxipath': make_output_filename(state),
+        'n_gpus': config['prefect_ptychocam_local_n_gpus'],
+        'n_iterations': config['prefect_ptychocam_local_n_iterations'],
+        'period_illu_refine': config['prefect_ptychocam_local_period_illu_refine'],
+        'period_bg_refine': config['prefect_ptychocam_local_period_bg_refine'],
+        'use_illu_mask': config['prefect_ptychocam_local_use_illu_mask'],
+    }
+
+    run_deployment(
+        name=config['prefect_ptychocam_local_deployment'],
+        parameters=parameters,
+        timeout=0
+    )
+
+
+def prefect_nersc_transfer(state, config):
+    print("[prefect]: Initializing data transfer to NERSC.")
+    year_2digits = state['identifier'][3:5]
+    year_4digits = '20' + year_2digits
+    month = state['identifier'][5:7]
+    day = state['identifier'][7:9]
+    filepath = f"{year_4digits}/{month}/{year_2digits}{month}{day}/{state['identifier']}.cxi"
+
+    prefect_api_url = os.getenv('PREFECT_API_URL')
+    prefect_api_key = os.getenv('PREFECT_API_KEY')
+    prefect_deployment = config['prefect_nersc_transfer_deployment']
+
+    asyncio.run(
+        prefect_start_flow(
+            prefect_api_url,
+            prefect_deployment,
+            filepath,
+            api_key=prefect_api_key
+        )
+    )
 
 
 async def prefect_start_flow(prefect_api_url, deployment_name, file_path, api_key=None):
