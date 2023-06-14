@@ -557,38 +557,43 @@ def main(argv=sys.argv):
 
             # Local reconstruction at cosmic machines, if wanted.
             if config['prefect_ptychocam_local']:
-                print("[prefect]: Initializing local reconstruction.")
-                parameters = {
-                    'cxipath': make_output_filename(state),
-                    'n_gpus': config['prefect_ptychocam_local_n_gpus'],
-                    'n_iterations': config['prefect_ptychocam_local_n_iterations'],
-                    'period_illu_refine': config['prefect_ptychocam_local_period_illu_refine'],
-                    'period_bg_refine': config['prefect_ptychocam_local_period_bg_refine'],
-                    'use_illu_mask': config['prefect_ptychocam_local_use_illu_mask'],
-                }
+                try:
+                    print("[prefect]: Initializing local reconstruction.")
+                    parameters = {
+                        'cxipath': make_output_filename(state),
+                        'n_gpus': config['prefect_ptychocam_local_n_gpus'],
+                        'n_iterations': config['prefect_ptychocam_local_n_iterations'],
+                        'period_illu_refine': config['prefect_ptychocam_local_period_illu_refine'],
+                        'period_bg_refine': config['prefect_ptychocam_local_period_bg_refine'],
+                       'use_illu_mask': config['prefect_ptychocam_local_use_illu_mask'],
+                    }
 
-                run_deployment(
-                        name=config['prefect_ptychocam_local_deployment'],
-                        parameters=parameters,
-                        timeout=0
-                        )
+                    run_deployment(
+                            name=config['prefect_ptychocam_local_deployment'],
+                            parameters=parameters,
+                            timeout=0
+                            )
+                except Exception as e:
+                    print("Prefect local ptychocam reconstruction failed due to: {}".format(e))
 
             # transfer data to NERSC
             if config["prefect_nersc_transfer"]:
-                print("[prefect]: Initializing data transfer to NERSC.")
-                year_2digits = state['identifier'][3:5]
-                year_4digits = '20' + year_2digits
-                month = state['identifier'][5:7]
-                day = state['identifier'][7:9]
-                filepath = f"{year_4digits}/{month}/{year_2digits}{month}{day}/{state['identifier']}.cxi"
+                try:
+                    print("[prefect]: Initializing data transfer to NERSC.")
+                    year_2digits = state['identifier'][3:5]
+                    year_4digits = '20' + year_2digits
+                    month = state['identifier'][5:7]
+                    day = state['identifier'][7:9]
+                    filepath = f"{year_4digits}/{month}/{year_2digits}{month}{day}/{state['identifier']}.cxi"
 
-                prefect_api_url = os.getenv('PREFECT_API_URL')
-                prefect_api_key = os.getenv('PREFECT_API_KEY')
-                prefect_deployment = config['prefect_nersc_transfer_deployment']
+                    prefect_api_url = os.getenv('PREFECT_API_URL')
+                    prefect_api_key = os.getenv('PREFECT_API_KEY')
+                    prefect_deployment = config['prefect_nersc_transfer_deployment']
 
-                asyncio.run(
-                    prefect_start_flow(prefect_api_url, prefect_deployment, filepath, api_key=prefect_api_key)
-                )
+                    asyncio.run(prefect_start_flow(prefect_api_url, prefect_deployment, filepath, api_key=prefect_api_key)
+                    )
+                except Exception as e:
+                    print("NERSC data transfer failed due to: {}".format(e))
 
 
 async def prefect_start_flow(prefect_api_url, deployment_name, file_path, api_key=None):
