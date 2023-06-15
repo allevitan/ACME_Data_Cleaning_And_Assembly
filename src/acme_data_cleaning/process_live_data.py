@@ -564,7 +564,7 @@ def prefect_cdtools_local(state, config):
         "run_split_reconstructions": config["prefect_cdtools_local_run_split_reconstructions"],
         "n_modes": config["prefect_cdtools_local_n_modes"],
         "oversampling_factor": config["prefect_cdtools_local_oversampling_factor"],
-        "propagation_distance": out_of_focus_distance_m,
+        "propagation_distance": float(out_of_focus_distance_m),
         "simulate_probe_translation": config["prefect_cdtools_local_simulate_probe_translation"],
         "n_init_rounds": config["prefect_cdtools_local_n_init_rounds"],
         "n_init_iter": config["prefect_cdtools_local_n_init_iter"],
