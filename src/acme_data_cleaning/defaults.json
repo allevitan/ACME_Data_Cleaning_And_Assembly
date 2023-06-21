@@ -49,5 +49,24 @@
     "prefect_ptychocam_local_n_iterations": 2000,
     "prefect_ptychocam_local_period_illu_refine": 1,
     "prefect_ptychocam_local_period_bg_refine": 1,
-    "prefect_ptychocam_local_use_illu_mask": true
+    "prefect_ptychocam_local_use_illu_mask": true,
+
+    "nersc_cdtools" : false,
+    "nersc_cdtools_run_split_reconstructions": false,
+    "nersc_cdtools_n_modes": 1,
+    "nersc_cdtools_oversampling_factor": 1,
+    "nersc_cdtools_simulate_probe_translation": true,
+    "nersc_cdtools_n_init_rounds": 1,
+    "nersc_cdtools_n_init_iter": 50,
+    "nersc_cdtools_n_final_iter": 50,
+    "nersc_cdtools_translation_randomization": 0,
+    "nersc_cdtools_probe_initialization": null,
+    "nersc_cdtools_init_background": false,
+    "nersc_cdtools_probe_support_radius": null,
+
+    "nersc_ptychocam": false,
+    "nersc_ptychocam_n_iterations": 2000,
+    "nersc_ptychocam_period_illu_refine": 1,
+    "nersc_ptychocam_period_bg_refine": 1,
+    "nersc_ptychocam_use_illu_mask": true
 }

@@ -14,6 +14,7 @@ from scipy import constants
 import copy
 # from splash_flows_globus.orchestration.flows.bl7012.move import process_new_file
 
+import nersc
 from prefect.client import OrionClient
 from prefect.orion.schemas.core import Flow, FlowRun
 from prefect.orion.schemas.states import Scheduled
@@ -596,6 +597,33 @@ def prefect_ptychocam_local(state, config):
         name=config['prefect_ptychocam_local_deployment'],
         parameters=parameters,
         timeout=0
+    )
+
+
+def nersc_cdtools(state, config):
+    nersc.cdtools(
+        cxiname=make_output_filename(state),
+        run_split_reconstructions=["nersc_cdtools_run_split_reconstructions"],
+        n_modes=config["nersc_cdtools_n_modes"],
+        oversampling_factor=["nersc_cdtools_oversampling_factor"],
+        simulate_probe_translation=["nersc_cdtools_simulate_probe_translation"],
+        n_init_rounds=["nersc_cdtools_n_init_rounds"],
+        n_init_iter=["nersc_cdtools_n_init_iter"],
+        n_final_iter=["nersc_cdtools_n_final_iter"],
+        translation_randomization=["nersc_cdtools_translation_randomization"],
+        probe_initialization=["nersc_cdtools_probe_initialization"],
+        init_background=["nersc_cdtools_init_background"],
+        probe_support_radius=["nersc_cdtools_probe_support_radius"],
+    )
+
+
+def nersc_ptychocam(state, config):
+    nersc.ptychocam(
+        cxiname=make_output_filename(state),
+        n_iter=config["nersc_ptychocam_n_iterations"],
+        period_illu_refine=config["nersc_ptychocam_period_illu_refine"],
+        period_bg_refine=config["nersc_ptychocam_period_bg_refine"],
+        use_illu_mask=config["nersc_ptychocam_use_illu_mask"]
     )
 
 
