@@ -233,17 +233,19 @@ def process_exp_event(cxi_file, state, event, pub, config):
         print('Creating the frame cleaner; all further darks will be disregarded')
         state['frame_cleaner'] = image_handling.FastCCDFrameCleaner([state['darks'][dwell] for dwell in state['dwells']])
 
-    # Change the position from um to m.
-    state['position'] = np.array([event['data']['xPos'], event['data']['yPos']]) * 1e-6  # / state['px_size_real_space']
-
-    # A correction for the shear in the probe positions
-    state['position'] = np.matmul(config['shear'], state['position'])
-
     frame_numpy = None
+    # This is entered when the next frame is already there, so the position should be red afterwards?
     if event['data']['index'] != state['index']:
         # we've moved on, so we need to finalize the frame
         finalize_frame(cxi_file, state, pub, config)
         state['index'] = event['data']['index']
+
+    # Change the position from um to m.
+    state['position'] = np.array(
+        [event['data']['xPos'], event['data']['yPos']]) * 1e-6  # / state['px_size_real_space']
+
+    # A correction for the shear in the probe positions
+    state['position'] = np.matmul(config['shear'], state['position'])
 
     dwell = event['data']['dwell']
     dwell_idx = np.where(state['dwells'] == dwell)[0][0]
