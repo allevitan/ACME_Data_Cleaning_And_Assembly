@@ -2,13 +2,17 @@ from authlib.integrations.requests_client import OAuth2Session
 from authlib.oauth2.rfc7523 import PrivateKeyJWT
 
 
+default_path_client_id = "/global/software/ptycholive-dev/nersc_api_keys/nersc_clientid.txt"
+default_path_private_key = "/global/software/ptycholive-dev/nersc_api_keys/nersc_priv_key.pem"
+
+
 def ptycho(
         cxiname,
-        path_client_id="/global/software/ptycholive-dev/nersc_api_keys/nersc_clientid.txt",
-        path_private_key="/global/software/ptycholive-dev/nersc_api_keys/nersc_priv_key.pem",
+        path_client_id=default_path_client_id,
+        path_private_key=default_path_private_key,
 ):
-    path_job_script_at_nersc_storage = "~/projects/nersc_cosmic_reco/ptycho/job_ptycho.sh"
-    submit_job(
+    path_job_script_at_nersc_storage = "/global/homes/a/achilles/projects/nersc_cosmic_reco/ptycho/job_ptycho.sh"
+    submit_job_script_on_nersc_storage(
         path_job_script_at_nersc_storage=path_job_script_at_nersc_storage,
         args=cxiname,
         path_client_id=path_client_id,
@@ -22,27 +26,36 @@ def ptychocam(
         period_illu_refine=0,
         period_bg_refine=0,
         use_illu_mask=False,
-        path_client_id="/global/software/ptycholive-dev/nersc_api_keys/nersc_clientid.txt",
-        path_private_key="/global/software/ptycholive-dev/nersc_api_keys/nersc_priv_key.pem",
+        path_client_id=default_path_client_id,
+        path_private_key=default_path_private_key,
 ):
-    path_job_script_at_nersc_storage = "~/projects/nersc_cosmic_reco/ptychocam/job_ptychocam.sh"
-    args = "-i,"
-    args += f"{n_iter},"
+    args = "-i "
+    args += f"{n_iter} "
 
     if period_illu_refine != 0:
-        args += "-r,"
-        args += f"{period_illu_refine},"
+        args += "-r "
+        args += f"{period_illu_refine} "
     if period_bg_refine != 0:
-        args += "-T,"
-        args += f"{period_bg_refine},"
+        args += "-T "
+        args += f"{period_bg_refine} "
     if use_illu_mask:
-        args += "-M,"
+        args += "-M "
 
     args += cxiname
 
-    submit_job(
-        path_job_script_at_nersc_storage=path_job_script_at_nersc_storage,
-        args=cxiname,
+    script_string = f"""#!/bin/bash
+#SBATCH --constraint=gpu
+#SBATCH --gpus=4
+#SBATCH --time=04:00:00
+#SBATCH --nodes=1
+#SBATCH --qos=regular
+#SBATCH --account=als_g
+
+~/projects/nersc_cosmic_reco/ptychocam/ptychocam_reconstruction.sh {args}
+    """
+
+    submit_job_script_as_string(
+        script_string=script_string,
         path_client_id=path_client_id,
         path_private_key=path_private_key
     )
@@ -53,6 +66,7 @@ def cdtools(
     run_split_reconstructions=False,
     n_modes=1,
     oversampling_factor=1,
+    propagation_distance=50 * 1e-6,
     simulate_probe_translation=True,
     n_init_rounds=1,
     n_init_iter=50,
@@ -61,37 +75,87 @@ def cdtools(
     probe_initialization=None,
     init_background=False,
     probe_support_radius=None,
-    path_client_id="/global/software/ptycholive-dev/nersc_api_keys/nersc_clientid.txt",
-    path_private_key="/global/software/ptycholive-dev/nersc_api_keys/nersc_priv_key.pem",
+    path_client_id=default_path_client_id,
+    path_private_key=default_path_private_key,
 ):
-    path_job_script_at_nersc_storage = "~/projects/nersc_cosmic_reco/cdtools/job_cdtools.sh"
-
-    args = f"{cxiname},"
-    args += f"{run_split_reconstructions},"
-    args += f"{n_modes},"
-    args += f"{oversampling_factor},"
-    args += f"{simulate_probe_translation},"
-    args += f"{n_init_rounds},"
-    args += f"{n_init_iter},"
-    args += f"{n_final_iter},"
-    args += f"{translation_randomization},"
-    args += f"{probe_initialization},"
-    args += f"{init_background},"
+    args = f"{cxiname} "
+    args += f"{run_split_reconstructions} "
+    args += f"{n_modes} "
+    args += f"{oversampling_factor} "
+    args += f"{propagation_distance} "
+    args += f"{simulate_probe_translation} "
+    args += f"{n_init_rounds} "
+    args += f"{n_init_iter} "
+    args += f"{n_final_iter} "
+    args += f"{translation_randomization} "
+    args += f"{probe_initialization} "
+    args += f"{init_background} "
     args += f"{probe_support_radius}"
 
-    submit_job(
-        path_job_script_at_nersc_storage=path_job_script_at_nersc_storage,
-        args=args,
+    script_string = f"""#!/bin/bash
+#SBATCH --constraint=gpu
+#SBATCH --gpus=1
+#SBATCH --time=04:00:00
+#SBATCH --nodes=1
+#SBATCH --qos=regular
+#SBATCH --account=als_g
+
+~/projects/nersc_cosmic_reco/cdtools/cdtools_reconstruction.sh {args}
+"""
+
+    submit_job_script_as_string(
+        script_string=script_string,
         path_client_id=path_client_id,
         path_private_key=path_private_key
     )
 
 
-def submit_job(
+def submit_job_script_as_string(
+        script_string,
+        path_client_id=default_path_client_id,
+        path_private_key=default_path_private_key,
+):
+    token_url = "https://oidc.nersc.gov/c2id/token"
+
+    with open(path_client_id, 'r') as f:
+        client_id = f.read()
+
+    with open(path_private_key, 'r') as f:
+        private_key = f.read()
+
+    session = OAuth2Session(
+        client_id,
+        private_key,
+        PrivateKeyJWT(token_url),
+        grant_type="client_credentials",
+        token_endpoint=token_url
+    )
+
+    token = session.fetch_token()
+
+    nersc_api_url = "https://api.nersc.gov/api/v1.2"
+    api_call = "compute/jobs"
+    system = "perlmutter"
+    api_call_url = f"{nersc_api_url}/{api_call}/{system}"
+
+    data = {
+        "job": script_string,
+        "isPath": False,
+    }
+
+    r = session.post(
+        api_call_url,
+        data=data
+    )
+
+    print(r.json())
+
+
+def submit_job_script_on_nersc_storage(
         path_job_script_at_nersc_storage,
-        args,
-        path_client_id,
-        path_private_key,
+        args=None,
+        path_client_id=default_path_client_id,
+        path_private_key=default_path_private_key,
 ):
     token_url = "https://oidc.nersc.gov/c2id/token"
 
@@ -119,8 +183,10 @@ def submit_job(
     data = {
         "job": path_job_script_at_nersc_storage,
         "isPath": True,
-        "args": args
     }
+
+    if args is not None:
+        data["args"] = args
 
     r = session.post(
         api_call_url,
