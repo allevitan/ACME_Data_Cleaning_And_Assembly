@@ -11,10 +11,19 @@ def ptycho(
         path_client_id=default_path_client_id,
         path_private_key=default_path_private_key,
 ):
-    path_job_script_at_nersc_storage = "/global/homes/a/achilles/projects/nersc_cosmic_reco/ptycho/job_ptycho.sh"
-    submit_job_script_on_nersc_storage(
-        path_job_script_at_nersc_storage=path_job_script_at_nersc_storage,
-        args=cxiname,
+    script_string = f"""#!/bin/bash
+#SBATCH --constraint=gpu
+#SBATCH --gpus=1
+#SBATCH --time=04:00:00
+#SBATCH --nodes=1
+#SBATCH --qos=regular
+#SBATCH --account=als_g
+
+~/projects/nersc_cosmic_reco/ptycho/ptycho_reconstruction.sh {cxiname}
+"""
+
+    submit_job_script_as_string(
+        script_string=script_string,
         path_client_id=path_client_id,
         path_private_key=path_private_key
     )
@@ -51,8 +60,9 @@ def ptychocam(
 #SBATCH --qos=regular
 #SBATCH --account=als_g
 
-~/projects/nersc_cosmic_reco/ptychocam/ptychocam_reconstruction.sh {args}
-    """
+~/cosmic_reconstruction_at_nersc/c_ptychocam/ptychocam_reconstruction.sh {args}
+"""
+# ~ / projects / nersc_cosmic_reco / ptychocam / ptychocam_reconstruction.sh {args}
 
     submit_job_script_as_string(
         script_string=script_string,
@@ -100,8 +110,9 @@ def cdtools(
 #SBATCH --qos=regular
 #SBATCH --account=als_g
 
-~/projects/nersc_cosmic_reco/cdtools/cdtools_reconstruction.sh {args}
+~/cosmic_reconstruction_at_nersc/c_cdtools/cdtools_reconstruction.sh {args}
 """
+# ~/projects/nersc_cosmic_reco/cdtools/cdtools_reconstruction.sh {args}
 
     submit_job_script_as_string(
         script_string=script_string,
