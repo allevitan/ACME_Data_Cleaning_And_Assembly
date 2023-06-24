@@ -19,7 +19,7 @@ def ptycho(
 #SBATCH --qos=regular
 #SBATCH --account=als_g
 
-~/projects/nersc_cosmic_reco/ptycho/ptycho_reconstruction.sh {cxiname}
+~/cosmic_reconstruction_at_nersc/c_ptycho/ptycho_reconstruction.sh {cxiname}
 """
 
     submit_job_script_as_string(
@@ -62,7 +62,6 @@ def ptychocam(
 
 ~/cosmic_reconstruction_at_nersc/c_ptychocam/ptychocam_reconstruction.sh {args}
 """
-# ~ / projects / nersc_cosmic_reco / ptychocam / ptychocam_reconstruction.sh {args}
 
     submit_job_script_as_string(
         script_string=script_string,
@@ -112,7 +111,6 @@ def cdtools(
 
 ~/cosmic_reconstruction_at_nersc/c_cdtools/cdtools_reconstruction.sh {args}
 """
-# ~/projects/nersc_cosmic_reco/cdtools/cdtools_reconstruction.sh {args}
 
     submit_job_script_as_string(
         script_string=script_string,
