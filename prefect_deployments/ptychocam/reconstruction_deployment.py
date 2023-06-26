@@ -2,7 +2,7 @@ from reconstruction_flow import ptychocam_from_cxi
 from prefect.deployments import Deployment
 
 infrastructure = {
-    'working_dir': '/global/software/ptycholive-dev/cosmic_prefect/ptychocam'
+    'working_dir': '/global/software/ptycholive/ACME_Data_Cleaning_And_Assembly/prefect_deployments/ptychocam'
 }
 
 parameters = {
@@ -15,7 +15,7 @@ parameters = {
 
 deployment = Deployment.build_from_flow(
     flow=ptychocam_from_cxi,
-    path='/global/software/ptycholive-dev/cosmic_prefect/ptychocam',
+    path='/global/software/ptycholive/ACME_Data_Cleaning_And_Assembly/prefect_deployments/ptychocam',
     parameters=parameters,
     name="ptychocam_from_cxi",
     version=1,

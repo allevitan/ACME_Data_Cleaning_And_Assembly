@@ -2,7 +2,7 @@ from reconstruction_flow import cdtools_from_cxi
 from prefect.deployments import Deployment
 
 infrastructure = {
-    'working_dir': '/global/software/ptycholive-dev/cosmic_prefect/ptychocam/cdtools'
+    'working_dir': '/global/software/ptycholive/ACME_Data_Cleaning_And_Assembly/prefect_deployments/cdtools'
 }
 
 parameters = {
@@ -22,7 +22,7 @@ parameters = {
 
 deployment = Deployment.build_from_flow(
     flow=cdtools_from_cxi,
-    path='/global/software/ptycholive-dev/cosmic_prefect/cdtools',
+    path='/global/software/ptycholive/ACME_Data_Cleaning_And_Assembly/prefect_deployments/cdtools',
     parameters=parameters,
     name="cdtools_from_cxi",
     version=1,
