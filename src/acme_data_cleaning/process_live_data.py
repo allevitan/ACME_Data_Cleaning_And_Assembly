@@ -4,7 +4,7 @@ import os
 import zmq
 import h5py
 from contextlib import contextmanager
-from acme_data_cleaning import image_handling, file_handling, config_handling, illumination_init
+from acme_data_cleaning import image_handling, file_handling, config_handling, illumination_init, nersc
 import argparse
 import sys
 import torch as t
@@ -14,7 +14,6 @@ from scipy import constants
 import copy
 # from splash_flows_globus.orchestration.flows.bl7012.move import process_new_file
 
-import nersc
 from prefect.client import OrionClient
 from prefect.orion.schemas.core import Flow, FlowRun
 from prefect.orion.schemas.states import Scheduled
